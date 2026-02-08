@@ -116,6 +116,12 @@ Directory structure mirrors the source 9Data layout.
 - [x] Column annotations with `displayName` and `description`
 - [x] FK shorthand: omit column → uses keyColumn, `@id` → uses idColumn
 
+### P2.5 - Encoding & Data Fidelity
+- [x] SHN string encoding: EUC-KR (code page 949) for Korean strings
+- [x] JsonElement handling in SHN write path (ConvertToByte/UInt32/etc.)
+- [x] ConvertFromSqlite: direct Int64/Double handling (no checked Convert overflow)
+- [x] ConvertFromSqlite: string-to-numeric TryParse fallback for raw table data
+
 ### P3 - Edit & Shell
 - [x] `edit` command: single-shot SQL modification with automatic save back to JSON
 - [x] `shell` command: interactive SQL REPL (sqlcmd-style)
@@ -157,13 +163,43 @@ Directory structure mirrors the source 9Data layout.
 - [ ] Deep analysis: string empty patterns (dash=key vs empty=text)
 - [ ] Investigate QuestData.shn (different format, crypto buffer overflow)
 
+### Naming Conventions
+> Currently "raw tables" and "raw tables define" are confusing names.
+> Consider renaming: "raw tables" → "shine tables", "raw tables define" → "config tables".
+> Shine .txt files often start with a comment annotating the table type - could be useful for auto-detection.
+
 ### File Exclusions
 - [ ] "gitignore"-style exclusion patterns in definitions file
 - [ ] Exclude files that look like tables but shouldn't be editable (e.g. ServerInfo.txt)
 
+### Column-based Table Type Matching
+> Our glob pattern matching for definitions could also match by column signature.
+> e.g. if columns = ["RegenIndex", "MobIndex", "MobNum", ...] → type is MobSpawnTable.
+> Then Siren_MobRegen matches that type and gets MobSpawnTable constraints applied automatically.
+> This would make it easier to define constraints for families of tables with the same structure.
+
+### Table Relationships & Grouping
+> Make it more obvious when tables belong together. Example: Siren.txt has MobRegenGroup + MobRegen.
+> MobRegenGroup defines groups with a string key "GroupIndex" (IsFamily decides if pulling one pulls all).
+> MobRegen uses RegenIndex (FK to MobRegenGroup.GroupIndex) to assign mobs to each group.
+> Note: MobRegen has no PK and no ID - row number is the implicit ID.
+> No unique constraint on FK either - multiple MobRegen records per MobRegenGroup is valid.
+
+### Constants / Enums in Shell
+- [ ] Support named constants in shell mode: `#Classes.Gladiator` → `0x80` (or whatever the value)
+- [ ] Load enum definitions from definitions file
+- [ ] Replace constant references in SQL before execution
+
+### Shell UX Improvements
+- [ ] Tab-completion for table names and column names
+- [ ] Column-aligned output (pad columns to fixed width, trim flexible-length columns at 32 chars)
+- [ ] When only 2-3 columns in SELECT, print full values without trimming
+
 ### Metadata Build-out
 - [ ] Go through all SHN/txt files and build column annotations for every table
 - [ ] Document what each column means across all game tables
+- [ ] Extract set definitions from drop tables (staggered 8, staggered 10, same-level types)
+  - Include level, rarity, name "colour", dungeon/instance/enemy association
 
 ---
 
@@ -224,11 +260,25 @@ Composable CLI commands for common multi-step operations:
 - Time limit editing (e.g. remove time limit from skins)
 - Visual monster spawn group editor
 
-### Client-side Asset Pipeline
-- Custom folder for cloned set textures/nifs
-- On build, copy client-side data to correct paths
-- "Edit overrides" - if cloned set has a matching gcf/psd, use that instead
-- Possible automated recoloring (find layer, dye, export to png on build)
+### Client Data & Asset Pipeline
+> **Open question: how to handle ~10GB of client binary resources (textures, nifs, gcf)?**
+> Importing everything into the project gives full consistency but bloats the repo.
+> Working in-place is lightweight but can't guarantee data hasn't changed externally.
+>
+> **Hybrid idea:** Import table data (SHN/txt) into the project as today. For binary
+> resources, track an external `clientRoot` path in mimir.json plus a local
+> `assetOverrides/` folder for modified/cloned assets. On build, copy from clientRoot
+> then overlay assetOverrides. This keeps the project small while allowing edits.
+>
+> Some files are shared between server and client (ItemInfo.shn), some are client-only
+> (ItemViewInfo.shn), some are server-only (MobRegen). Need to track which is which.
+
+- [ ] Import client-side table data (client SHN files)
+- [ ] Track `clientRoot` path in project manifest
+- [ ] Asset override folder for modified textures/nifs
+- [ ] On build, copy from clientRoot + overlay overrides
+- [ ] "Edit overrides" - if cloned set has a matching gcf/psd, use that instead
+- [ ] Possible automated recoloring (find layer, dye, export to png on build)
 
 ### Quest System
 - Reverse engineer quest file format
@@ -240,6 +290,10 @@ Composable CLI commands for common multi-step operations:
 - Build a parser / AST for the scenario language
 - Compiler / syntax checker
 - Testing tools (dry-run a scenario script against game data)
+
+### Map Editor
+- [ ] Edit collision "block info" (walkable/not-walkable grid, ~256x256 8-bit bools)
+- [ ] Visual editor for block info maps
 
 ### IDE Tooling (Far Future)
 - VSCode extension with language support for scenario scripts
@@ -259,3 +313,4 @@ Composable CLI commands for common multi-step operations:
 - Scenario files use a custom language (not Lua) - TBD
 - .NET 10 SDK available on build VM (10.0.102)
 - GitHub: https://github.com/IkaronClaude/ProjectMimir
+
