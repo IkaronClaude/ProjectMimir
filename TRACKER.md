@@ -142,8 +142,19 @@ Directory structure mirrors the source 9Data layout.
 
 ## Active Work
 
+### Client Data Integration
+- [x] Multi-source import: `--client` option on import command
+- [x] Source origin tracking: server / client / shared per table (in metadata)
+- [x] Duplicate detection: identical tables marked "shared", mismatches reported as conflicts
+- [x] Build command: `--client-output` option writes client/shared tables to separate directory
+- [x] TableComparer for data-level duplicate detection
+- [x] Client data explored: 203 SHN files in `Z:/Client/Fiesta Online/ressystem/`
+- [x] Multi-source import verified: 1336 tables (1210 server, 84 client, 42 shared, 82 conflicts)
+- [ ] Handle conflicting tables (import both versions with separate paths)
+- [ ] Full round-trip test with server + client data
+
 ### Round-trip Verification
-- [ ] Unit tests with synthetic data (no copyrighted game data in git)
+- [x] Unit tests with synthetic data (37 tests passing)
 - [ ] Byte-identical SHN round-trip testing
 - [ ] Shine table round-trip testing (import .txt → JSON → build .txt)
 
@@ -256,20 +267,18 @@ Composable CLI commands for common multi-step operations:
 - Visual monster spawn group editor
 
 ### Client Data & Asset Pipeline
-> **Open question: how to handle ~10GB of client binary resources (textures, nifs, gcf)?**
-> Importing everything into the project gives full consistency but bloats the repo.
-> Working in-place is lightweight but can't guarantee data hasn't changed externally.
+> **Table data (SHN/txt)** is now handled by multi-source import. The import command
+> accepts `--client` to import both server and client data, auto-detecting shared tables.
+> Build writes to separate server/client output directories based on source origin.
 >
-> **Hybrid idea:** Import table data (SHN/txt) into the project as today. For binary
-> resources, track an external `clientRoot` path in mimir.json plus a local
-> `assetOverrides/` folder for modified/cloned assets. On build, copy from clientRoot
-> then overlay assetOverrides. This keeps the project small while allowing edits.
->
-> Some files are shared between server and client (ItemInfo.shn), some are client-only
-> (ItemViewInfo.shn), some are server-only (MobRegen). Need to track which is which.
+> **Binary resources (~10GB textures, nifs, gcf)** still need the hybrid approach:
+> Track an external `clientRoot` path plus local `assetOverrides/` folder.
+> On build, copy from clientRoot then overlay assetOverrides.
 
-- [ ] Import client-side table data (client SHN files)
-- [ ] Track `clientRoot` path in project manifest
+- [x] Import client-side table data (multi-source import with `--client`)
+- [x] Track sources in project manifest
+- [x] Build to separate server/client output directories
+- [ ] Track `clientRoot` path for binary assets
 - [ ] Asset override folder for modified textures/nifs
 - [ ] On build, copy from clientRoot + overlay overrides
 - [ ] "Edit overrides" - if cloned set has a matching gcf/psd, use that instead

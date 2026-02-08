@@ -1,13 +1,26 @@
 # Mimir - Fiesta Online Server Data Toolkit
 
+## Environment
+
+- **Platform**: Windows — use forward slashes (`Z:/path`) or double backslashes (`Z:\\path`) in bash/CLI commands
+- **.NET version**: 10.0 (SDK 10.0.102)
+- **GitHub**: https://github.com/IkaronClaude/ProjectMimir
+
 ## Quick Reference
 
 - **Build**: `dotnet build Mimir.sln`
 - **Test**: `dotnet test Mimir.sln`
 - **Run CLI**: `dotnet run --project src/Mimir.Cli -- <command>`
-- **Import**: `dotnet run --project src/Mimir.Cli -- import "Z:\Odin Server Files\Server\9Data" test-project`
-- **.NET version**: 10.0 (SDK 10.0.102)
-- **GitHub**: https://github.com/IkaronClaude/ProjectMimir
+- **Import server only**: `dotnet run --project src/Mimir.Cli -- import "Z:/Odin Server Files/Server/9Data" test-project`
+- **Import server + client**: `dotnet run --project src/Mimir.Cli -- import "Z:/Odin Server Files/Server/9Data" test-project --client "Z:/Client/Fiesta Online/ressystem"`
+
+## Data Locations
+
+- **Server 9Data**: `Z:/Odin Server Files/Server/9Data/` (~218 SHN + hundreds of .txt)
+- **Client ressystem**: `Z:/Client/Fiesta Online/ressystem/` (203 SHN files, no text tables)
+- **Overlap**: 118 shared SHN files, 102 server-only, 39 client-only
+- Client-only files are mostly UI/text/visual (BasicInfo*, TextData*, FontSet, DamageEffect, etc.)
+- `.shd` files in ressystem are height maps / walkability grids, not data tables
 
 ## Project Structure
 
@@ -31,6 +44,7 @@ test-project/          Real imported data (gitignored, ~1234 tables)
 - **Test framework**: xUnit + Shouldly + NSubstitute (Directory.Build.props in tests/)
 - **Test files need** `using Xunit;` (not auto-imported via global usings)
 - **Format IDs**: `"shn"`, `"shinetable"`, `"configtable"` - never use old names "rawtable"/"rawtable-define"
+- **Parser classes**: `ShineTableFormatParser` (#table format), `ConfigTableFormatParser` (#DEFINE format)
 - **Definitions file** (`mimir.definitions.json`): Lives at repo root, NOT inside test-project. Searched upward from project dir.
 - **SHN encoding**: EUC-KR (code page 949) - never use UTF-8 for SHN string operations
 - **SQLite integer handling**: Use `unchecked()` casts for unsigned types (UInt32, UInt64) since SQLite stores everything as Int64
