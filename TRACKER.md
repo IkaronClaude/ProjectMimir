@@ -23,7 +23,6 @@ A Mimir project directory looks like:
 ```
 my-server/
   mimir.json                 # project manifest (table name → file path)
-  mimir.definitions.json     # table definitions + constraint rules
   data/
     shn/
       Shine/
@@ -31,7 +30,7 @@ my-server/
         MobInfo.json
         Shine/View/
           ItemViewInfo.json
-    rawtable/
+    shinetable/
       Shine/MobRegen/
         AdlVal01_MobRegenGroup.json
       Shine/NPCItemList/
@@ -40,11 +39,12 @@ my-server/
         AdlF_Script.json
       Shine/World/
         ChrCommon_Common.json
-    rawtable-define/
+    configtable/
       ServerInfo/
         ServerInfo_SERVER_INFO.json
       Shine/
         DefaultCharacterData_CHARACTER.json
+  mimir.definitions.json     # table definitions + constraint rules (walks up from project dir)
 ```
 
 Directory structure mirrors the source 9Data layout.
@@ -64,7 +64,7 @@ Directory structure mirrors the source 9Data layout.
   "constraints": [
     {
       "description": "NPC shop items reference ItemInfo",
-      "match": { "path": "rawtable/Shine/NPCItemList/**", "column": "Column*" },
+      "match": { "path": "data/shinetable/Shine/NPCItemList/**", "column": "Column*" },
       "foreignKey": { "table": "ItemInfo" },
       "emptyValues": ["-", ""]
     }
@@ -95,13 +95,14 @@ Directory structure mirrors the source 9Data layout.
 - [x] Updated IDataProvider to return `IReadOnlyList<TableEntry>` (multi-table files)
 - [x] **Full import: 218/219 SHN tables** (only QuestData.shn fails - different format)
 
-### P1 - Raw Tables
+### P1 - Shine Tables (text formats)
 - [x] Identified 2 text formats across all of 9Data
 - [x] `#table/#columntype/#columnname/#record` parser (MobRegen, NPCItemList, Script, World, etc.)
 - [x] `#DEFINE/#ENDDEFINE` parser (ServerInfo, DefaultCharacterData configs)
-- [x] `RawTableDataProvider` with auto-detection
+- [x] `ShineTableDataProvider` with auto-detection (format: "shinetable" / "configtable")
+- [x] Write support for both table and define formats
 - [x] DI registration
-- [x] **Full import: 1234 total tables** (218 SHN + ~1016 raw tables) from all of 9Data
+- [x] **Full import: 1234 total tables** (218 SHN + ~1016 text tables) from all of 9Data
 - [x] Directory structure preserved in project layout
 
 ### P2 - Definitions & Constraints
@@ -134,26 +135,25 @@ Directory structure mirrors the source 9Data layout.
 
 ### Build
 - [x] `build` command for SHN: JSON → SHN binary output
+- [x] `build` command for shine tables: JSON → .txt output (table + define formats)
 - [x] Build preserves original directory structure from manifest paths
 
 ---
 
 ## Active Work
 
-### Raw Table Write
-- [ ] `RawTableDataProvider.WriteAsync` (currently `NotImplementedException`)
-- [ ] Round-trip test: import .txt → JSON → build .txt
-
 ### Round-trip Verification
-- [ ] Byte-identical SHN round-trip testing
 - [ ] Unit tests with synthetic data (no copyrighted game data in git)
+- [ ] Byte-identical SHN round-trip testing
+- [ ] Shine table round-trip testing (import .txt → JSON → build .txt)
 
 ---
 
 ## Planned
 
 ### Definitions per Project Type
-> Currently definitions are per-project (`mimir.definitions.json` in the project root).
+> Definitions file (`mimir.definitions.json`) is now searched upward from the project directory
+> (like `.gitignore`). Currently lives at the repo root, outside the project folder.
 > In the future, definitions should be per **project type** and shipped with the application.
 > e.g. "Fiesta Online" project type includes all table key/column metadata out of the box.
 > The definitions file can also track the SHN encryption key if different from default.
@@ -162,11 +162,6 @@ Directory structure mirrors the source 9Data layout.
 - [ ] Deep analysis: check signedness of types 20/21/22 (signed vs unsigned)
 - [ ] Deep analysis: string empty patterns (dash=key vs empty=text)
 - [ ] Investigate QuestData.shn (different format, crypto buffer overflow)
-
-### Naming Conventions
-> Currently "raw tables" and "raw tables define" are confusing names.
-> Consider renaming: "raw tables" → "shine tables", "raw tables define" → "config tables".
-> Shine .txt files often start with a comment annotating the table type - could be useful for auto-detection.
 
 ### File Exclusions
 - [ ] "gitignore"-style exclusion patterns in definitions file
