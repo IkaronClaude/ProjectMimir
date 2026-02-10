@@ -318,3 +318,7 @@ Composable CLI commands for common multi-step operations:
 - .NET 10 SDK available on build VM (10.0.102)
 - GitHub: https://github.com/IkaronClaude/ProjectMimir
 
+
+# TO SORT:
+* On true conflicts, maybe split the tables into e.g. ItemInfo and ItemInfo_Client. This is so that we can ensure that a project can always load, even in a very broken state (in this case, probably disallow/error on build?)
+	This way, people can supply scripts or use cli shell mode to use SQL queries for example to fix up conflicts.
