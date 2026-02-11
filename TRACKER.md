@@ -155,8 +155,8 @@ Directory structure mirrors the source 9Data layout.
 
 ### Round-trip Verification
 - [x] Unit tests with synthetic data (37 tests passing)
-- [ ] Byte-identical SHN round-trip testing
-- [ ] Shine table round-trip testing (import .txt → JSON → build .txt)
+- [x] Byte-identical SHN round-trip testing (synthetic + real-world)
+- [x] Shine table round-trip testing (import .txt → JSON → build .txt, both #table and #DEFINE formats)
 
 ---
 
