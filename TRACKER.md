@@ -142,43 +142,19 @@ Directory structure mirrors the source 9Data layout.
 
 ## Priority
 
-### Fixed Test Fixtures for Integration Tests
-> Integration tests currently generate SHN/TXT files programmatically via providers. Instead,
-> use fixed committed test files as fixtures. Workflow: edit a project's JSON to add a table,
-> build it to produce a real SHN/TXT, then copy that file into the test fixtures directory.
-> Tests then use these real files as input — more realistic, inspectable, and stable.
-- [ ] Create `tests/fixtures/` directory with committed SHN and TXT test files
-- [ ] Migrate SyntheticRoundtripTests to use fixed fixture files instead of WriteShn/WriteTxt
-- [ ] Verify byte-identical roundtrip against known-good fixture files
+> **Guiding principle:** Fully functional basics before cool features. A working pipeline
+> (import → edit → build → deploy) that handles all data correctly is worth more than
+> half-finished advanced features.
 
-### Drop Table Consolidation for SQL Queries
-> Text tables (spawn groups, NPC item lists, drop tables, etc.) are split into hundreds of separate
-> tables by source file, making SQL queries across them nearly impossible. Need a merge rule
-> (template action or import option) that consolidates all tables of the same schema into a single
-> table, with an extra column for the source key (original filename / mob name).
-> E.g. all `*_MobRegen` tables → one `MobRegen` table with a `SourceKey` column.
-> This makes `SELECT * FROM MobRegen WHERE MobIndex = 123` actually work.
-- [ ] Design merge-by-schema template action (or auto-detect same-schema tables from same format)
-- [ ] Add source key column during consolidation
-- [ ] Ensure build can split back out to individual files
-- [ ] Test with MobRegen (spawns), NPCItemList, and drop table families
+### P1: Text Table String Length Bug
+> Configtable #DEFINE STRING columns hardcode length 256, silently truncating longer strings.
+> Simple bug, real data fidelity issue — fix ASAP.
+- [ ] Remove hardcoded 256 limit for configtable STRING columns
 
-### QuestData.shn Support
-- [x] Get QuestData.shn importing (QuestDataProvider with custom binary parser)
-- [x] Reverse-engineer quest file format: uint16 version + count header, length-prefixed records with 666-byte fixed region + 3 null-terminated EUC-KR scripts, no XOR encryption
-- [x] Quest reader/writer integrated into Mimir (QuestDataProvider registered via DI, ShnDataProvider.CanHandle validates SHN structure to reject quest files)
-
-### README Update
-- [x] Update README.md to reflect current feature set (QuestData support, multi-env import, template system, etc.)
-
----
-
-## Active Work
-
-### Text Table Bugs
-- [ ] Text table strings should not be limited to length 256 (configtable #DEFINE STRING columns hardcode length 256)
-
-### Client Data Integration
+### P2: Conflicting Table Handling (Client Data)
+> 45 tables conflict between server and client (same name, different data). Currently ignored
+> during import. This is critical — the program must handle all data correctly before adding
+> new features. Import both versions, build the correct one per environment.
 - [x] Multi-source import: `--client` option on import command
 - [x] Source origin tracking: server / client / shared per table (in metadata)
 - [x] Duplicate detection: identical tables marked "shared", mismatches reported as conflicts
@@ -189,10 +165,61 @@ Directory structure mirrors the source 9Data layout.
 - [ ] Handle conflicting tables (import both versions with separate paths)
 - [ ] Full round-trip test with server + client data
 
-### Round-trip Verification
-- [x] Unit tests with synthetic data (37 tests passing)
-- [x] Byte-identical SHN round-trip testing (synthetic + real-world)
-- [x] Shine table round-trip testing (import .txt → JSON → build .txt, both #table and #DEFINE formats)
+### P3: CI/CD — Push-to-Deploy Pipeline
+> The end goal: push a JSON change to a GitHub repo → CI validates + builds → server auto-restarts
+> with new data → client patch is packed and ready to download. This is the next step after
+> P2/P3 are done, so we can actually test Mimir in a real-world workflow.
+- [ ] Dockerfile for `mimir` CLI
+- [ ] GitHub Actions workflow: validate + build on push
+- [ ] Exit non-zero on validation failure
+- [ ] Server deploy integration (auto-restart on new build)
+- [ ] Client patch packaging (build client output into distributable patch)
+
+### P4: Drop Table Consolidation
+> Text tables (spawn groups, NPC item lists, drop tables, etc.) are split into hundreds of separate
+> tables by source file, making SQL queries across them nearly impossible. Need a merge rule
+> (template action or import option) that consolidates all tables of the same schema into a single
+> table, with an extra column for the source key (original filename / mob name).
+> E.g. all `*_MobRegen` tables → one `MobRegen` table with a `SourceKey` column.
+> This makes `SELECT * FROM MobRegen WHERE MobIndex = 123` actually work.
+> This is also a merge rule problem like P2 — tackling them together makes sense.
+- [ ] Design merge-by-schema template action (or auto-detect same-schema tables from same format)
+- [ ] Add source key column during consolidation
+- [ ] Ensure build can split back out to individual files
+- [ ] Test with MobRegen (spawns), NPCItemList, and drop table families
+
+### P5: QuestData Field Mapping
+> Map more of the 666-byte fixed data region beyond QuestID. Generate a binary dump for
+> collaborative hand-analysis against Spark Editor / known quest data. Expand FixedData
+> into proper named columns as offsets are identified.
+- [ ] Generate annotated hex dump of QuestData fixed region for hand-analysis
+- [ ] Cross-reference with Spark Editor field definitions
+- [ ] Incrementally extract known fields into proper columns
+
+### Nice-to-Have (Do When Convenient)
+
+#### Fixed Test Fixtures for Integration Tests
+> Integration tests currently generate SHN/TXT files programmatically via providers. Instead,
+> use fixed committed test files as fixtures. High prio for reliability but not blocking anything.
+- [ ] Create `tests/fixtures/` directory with committed SHN and TXT test files
+- [ ] Migrate SyntheticRoundtripTests to use fixed fixture files instead of WriteShn/WriteTxt
+- [ ] Verify byte-identical roundtrip against known-good fixture files
+
+### Completed
+- [x] QuestData.shn support (QuestDataProvider — custom binary parser, no XOR, 666-byte fixed region + 3 PineScript strings)
+- [x] README update
+
+---
+
+## Shelved (Revisit Later)
+
+### SHN Type Refinements
+- [ ] Deep analysis: check signedness of types 20/21/22 (signed vs unsigned)
+- [ ] Deep analysis: string empty patterns (dash=key vs empty=text)
+
+### File Exclusions
+- [ ] "gitignore"-style exclusion patterns in definitions file
+- [ ] Exclude files that look like tables but shouldn't be editable (e.g. ServerInfo.txt)
 
 ---
 
@@ -204,14 +231,6 @@ Directory structure mirrors the source 9Data layout.
 > In the future, definitions should be per **project type** and shipped with the application.
 > e.g. "Fiesta Online" project type includes all table key/column metadata out of the box.
 > The definitions file can also track the SHN encryption key if different from default.
-
-### SHN Type Refinements
-- [ ] Deep analysis: check signedness of types 20/21/22 (signed vs unsigned)
-- [ ] Deep analysis: string empty patterns (dash=key vs empty=text)
-
-### File Exclusions
-- [ ] "gitignore"-style exclusion patterns in definitions file
-- [ ] Exclude files that look like tables but shouldn't be editable (e.g. ServerInfo.txt)
 
 ### Column-based Table Type Matching
 > Our glob pattern matching for definitions could also match by column signature.
@@ -271,11 +290,6 @@ String columns: `-` when empty = key/index, `""` when empty = free text.
 ---
 
 ## Stretch Goals
-
-### CI/CD
-- [ ] Dockerfile for `mimir` CLI
-- [ ] Example GitHub Actions workflow: validate + build on push
-- [ ] Exit non-zero on validation failure
 
 ### Data Validation / Linting
 Built-in rules that detect common mistakes and inconsistencies:
