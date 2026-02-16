@@ -169,7 +169,7 @@ Directory structure mirrors the source 9Data layout.
 - [x] Quest reader/writer integrated into Mimir (QuestDataProvider registered via DI, ShnDataProvider.CanHandle validates SHN structure to reject quest files)
 
 ### README Update
-- [ ] Update README.md to reflect current feature set (QuestData support, multi-env import, template system, etc.)
+- [x] Update README.md to reflect current feature set (QuestData support, multi-env import, template system, etc.)
 
 ---
 
@@ -326,6 +326,10 @@ Composable CLI commands for common multi-step operations:
 - Map more fixed-data field offsets beyond QuestID (expand FixedData into proper columns)
 
 ### Scenario Scripting
+> **Note:** QuestData.shn has PineScripts inlined directly into it (StartScript, InProgressScript,
+> FinishScript columns). When tackling script editing, quest scripts live here — not in separate
+> script files. The QuestDataProvider already extracts them as string columns, so they're
+> queryable/editable via SQL today, but a proper script editor would need to parse PineScript syntax.
 - Document the custom scripting language used for instance scripts
 - Build a parser / AST for the scenario language
 - Compiler / syntax checker
