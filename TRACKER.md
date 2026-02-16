@@ -93,7 +93,7 @@ Directory structure mirrors the source 9Data layout.
 - [x] Fixed type 29 (0x1D) = uint64 flags (targets, activities)
 - [x] Fixed type 26 reading: proper null-terminated string (not hacky rowLength calc)
 - [x] Updated IDataProvider to return `IReadOnlyList<TableEntry>` (multi-table files)
-- [x] **Full import: 218/219 SHN tables** (only QuestData.shn fails - different format)
+- [x] **Full import: 219/219 SHN tables** (QuestData.shn handled by QuestDataProvider)
 
 ### P1 - Shine Tables (text formats)
 - [x] Identified 2 text formats across all of 9Data
@@ -140,7 +140,43 @@ Directory structure mirrors the source 9Data layout.
 
 ---
 
+## Priority
+
+### Fixed Test Fixtures for Integration Tests
+> Integration tests currently generate SHN/TXT files programmatically via providers. Instead,
+> use fixed committed test files as fixtures. Workflow: edit a project's JSON to add a table,
+> build it to produce a real SHN/TXT, then copy that file into the test fixtures directory.
+> Tests then use these real files as input — more realistic, inspectable, and stable.
+- [ ] Create `tests/fixtures/` directory with committed SHN and TXT test files
+- [ ] Migrate SyntheticRoundtripTests to use fixed fixture files instead of WriteShn/WriteTxt
+- [ ] Verify byte-identical roundtrip against known-good fixture files
+
+### Drop Table Consolidation for SQL Queries
+> Text tables (spawn groups, NPC item lists, drop tables, etc.) are split into hundreds of separate
+> tables by source file, making SQL queries across them nearly impossible. Need a merge rule
+> (template action or import option) that consolidates all tables of the same schema into a single
+> table, with an extra column for the source key (original filename / mob name).
+> E.g. all `*_MobRegen` tables → one `MobRegen` table with a `SourceKey` column.
+> This makes `SELECT * FROM MobRegen WHERE MobIndex = 123` actually work.
+- [ ] Design merge-by-schema template action (or auto-detect same-schema tables from same format)
+- [ ] Add source key column during consolidation
+- [ ] Ensure build can split back out to individual files
+- [ ] Test with MobRegen (spawns), NPCItemList, and drop table families
+
+### QuestData.shn Support
+- [x] Get QuestData.shn importing (QuestDataProvider with custom binary parser)
+- [x] Reverse-engineer quest file format: uint16 version + count header, length-prefixed records with 666-byte fixed region + 3 null-terminated EUC-KR scripts, no XOR encryption
+- [x] Quest reader/writer integrated into Mimir (QuestDataProvider registered via DI, ShnDataProvider.CanHandle validates SHN structure to reject quest files)
+
+### README Update
+- [ ] Update README.md to reflect current feature set (QuestData support, multi-env import, template system, etc.)
+
+---
+
 ## Active Work
+
+### Text Table Bugs
+- [ ] Text table strings should not be limited to length 256 (configtable #DEFINE STRING columns hardcode length 256)
 
 ### Client Data Integration
 - [x] Multi-source import: `--client` option on import command
@@ -172,7 +208,6 @@ Directory structure mirrors the source 9Data layout.
 ### SHN Type Refinements
 - [ ] Deep analysis: check signedness of types 20/21/22 (signed vs unsigned)
 - [ ] Deep analysis: string empty patterns (dash=key vs empty=text)
-- [ ] Investigate QuestData.shn (different format, crypto buffer overflow)
 
 ### File Exclusions
 - [ ] "gitignore"-style exclusion patterns in definitions file
@@ -285,9 +320,10 @@ Composable CLI commands for common multi-step operations:
 - [ ] Possible automated recoloring (find layer, dye, export to png on build)
 
 ### Quest System
-- Reverse engineer quest file format
-- Quest reader/writer integrated into Mimir
+- ~~Reverse engineer quest file format~~ (done — QuestDataProvider)
+- ~~Quest reader/writer integrated into Mimir~~ (done)
 - Cross-reference validation (quest rewards vs item DB, quest mobs vs mob DB)
+- Map more fixed-data field offsets beyond QuestID (expand FixedData into proper columns)
 
 ### Scenario Scripting
 - Document the custom scripting language used for instance scripts
