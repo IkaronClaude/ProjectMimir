@@ -178,6 +178,7 @@ Directory structure mirrors the source 9Data layout.
 - [x] ServerInfo.txt override for Docker (ODBC Driver 17, `sqlserver` hostname)
 - [ ] Smoke test: server boots, accepts connections with Mimir-built data
 - [ ] Integration: `mimir build` → `docker compose restart gameserver` → verify server health
+- Note: BuildKit must be disabled for Windows containers (`set DOCKER_BUILDKIT=0`)
 
 ### P4: CI/CD — Push-to-Deploy Pipeline
 > The end goal: push a JSON change to a GitHub repo → CI validates + builds → server auto-restarts
@@ -195,12 +196,14 @@ Directory structure mirrors the source 9Data layout.
 > and extracts to the client folder (overwriting existing files). This also gives us a real
 > target to test client build packaging against — CI builds the client data, packs a patch
 > zip, uploads it, and the patcher pulls it down.
-- [ ] Patch index format: JSON manifest listing versions, zip URLs, checksums
-- [ ] Patcher app: fetch index → compare version → download zip → extract over client dir
-- [ ] Version tracking: local version file in client dir, compare against index
-- [ ] Progress reporting (download %, extraction %)
-- [ ] `mimir pack` CLI command: build client env → zip → generate/update patch index JSON
+- [x] Patch index format: JSON manifest listing versions, zip URLs, checksums
+- [x] Patcher app: fetch index → compare version → download zip → extract over client dir
+- [x] Version tracking: local version file in client dir, compare against index
+- [x] `mimir pack` CLI command: build client env → diff against manifest → zip changed files → update patch index
+- [x] Patcher script: `deploy/patcher/patch.bat` + `patch.ps1` (PowerShell, SHA-256 verification)
+- [x] 9 integration tests covering full pack lifecycle (first pack, incremental, no-change, base-url)
 - [ ] Test loop: `mimir build --all` → `mimir pack` → patcher downloads + applies → client launches
+- [ ] Progress reporting (download %, extraction %)
 
 ### P6: Edit in External Editor
 > Open a single table in an external SHN editor (e.g. Spark Editor) for quick visual edits.
@@ -344,7 +347,7 @@ Built-in rules that detect common mistakes and inconsistencies:
 Composable CLI commands for common multi-step operations:
 - Clone map
 - Clone mob type (including skills, spawn groups, etc.)
-- Clone armor set (duplicate items, adjust names/stats, add to drop tables)
+- Clone armor set (duplicate items, adjust names/stats, add to drop tables, copy referenced assets into `overrides/client/`)
 - Calculate stat formulas from given data, apply with multiplier to new sets
 - Quick drop group creation & assignment (e.g. apply to all mobs with level > 120)
 - Quick enhancement stat adjustment, enhancement groups

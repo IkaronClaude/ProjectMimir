@@ -16,6 +16,8 @@
 - **Edit template**: `dotnet run --project src/Mimir.Cli -- edit-template test-project --table ColorInfo --conflict-strategy split`
 - **Build for env**: `dotnet run --project src/Mimir.Cli -- build test-project ./build/server --env server`
 - **Build all envs**: `dotnet run --project src/Mimir.Cli -- build test-project ./build --all`
+- **Pack client patches**: `dotnet run --project src/Mimir.Cli -- pack test-project ./patches` (incremental zip + patch-index.json)
+- **Pack with URL prefix**: `dotnet run --project src/Mimir.Cli -- pack test-project ./patches --base-url https://patches.example.com/`
 
 ## Data Locations
 
