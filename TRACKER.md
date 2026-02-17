@@ -149,7 +149,7 @@ Directory structure mirrors the source 9Data layout.
 ### P1: Text Table String Length Bug
 > Configtable #DEFINE STRING columns hardcode length 256, silently truncating longer strings.
 > Simple bug, real data fidelity issue — fix ASAP.
-- [ ] Remove hardcoded 256 limit for configtable STRING columns
+- [x] Remove hardcoded 256 limit for configtable STRING columns (changed to Length=0, variable-length)
 
 ### P2: Conflicting Table Handling (Client Data)
 > 45 tables conflict between server and client (same name, different data). Currently ignored
@@ -162,20 +162,59 @@ Directory structure mirrors the source 9Data layout.
 - [x] TableComparer for data-level duplicate detection
 - [x] Client data explored: 203 SHN files in `Z:/Client/Fiesta Online/ressystem/`
 - [x] Multi-source import verified: 1336 tables (1210 server, 84 client, 42 shared, 82 conflicts)
-- [ ] Handle conflicting tables (import both versions with separate paths)
-- [ ] Full round-trip test with server + client data
+- [x] Handle conflicting tables via conflict column splitting (`conflictStrategy: "split"` on merge actions)
+- [x] `edit-template` CLI command to set conflictStrategy on merge actions
+- [x] Full round-trip verified: init-template → edit-template → import → build → server SHN byte-identical, client data-identical (SHN header metadata from server base is a known limitation)
 
-### P3: CI/CD — Push-to-Deploy Pipeline
+### P3: Local Docker Test Server
+> Stand up a real Fiesta server locally in Docker Compose to test Mimir's output end-to-end.
+> Two Windows containers: SQL Server Express (7 game databases) + game server (all 11 processes).
+> Server binaries volume-mounted from `Z:/Server/`, game data from Mimir build output.
+> Validates that built data files actually work — "server boots and players can log in."
+- [x] Docker Compose config (`deploy/docker-compose.yml`)
+- [x] SQL Server container with database restore from .bak files (`Dockerfile.sql`, `setup-sql.ps1`)
+- [x] Game server container with all 11 processes (`Dockerfile.server`, `start-server.ps1`)
+- [x] Volume mounts for server binaries + Mimir build output (9Data)
+- [x] ServerInfo.txt override for Docker (ODBC Driver 17, `sqlserver` hostname)
+- [ ] Smoke test: server boots, accepts connections with Mimir-built data
+- [ ] Integration: `mimir build` → `docker compose restart gameserver` → verify server health
+
+### P4: CI/CD — Push-to-Deploy Pipeline
 > The end goal: push a JSON change to a GitHub repo → CI validates + builds → server auto-restarts
-> with new data → client patch is packed and ready to download. This is the next step after
-> P2/P3 are done, so we can actually test Mimir in a real-world workflow.
+> with new data → client patch is packed and ready to download. Builds on the k8s setup from P3 —
+> the local cluster is our test target for the full CI/CD loop before going to production.
 - [ ] Dockerfile for `mimir` CLI
 - [ ] GitHub Actions workflow: validate + build on push
 - [ ] Exit non-zero on validation failure
-- [ ] Server deploy integration (auto-restart on new build)
-- [ ] Client patch packaging (build client output into distributable patch)
+- [ ] Server deploy integration (auto-restart on new build via k8s rollout)
+- [ ] Client patch packaging (build client output into distributable zip)
 
-### P4: Drop Table Consolidation
+### P5: Client Patcher
+> Simple standalone patcher app for players. Loads a patch index JSON from a web server,
+> compares against the client's current version, downloads the zip for the current patch,
+> and extracts to the client folder (overwriting existing files). This also gives us a real
+> target to test client build packaging against — CI builds the client data, packs a patch
+> zip, uploads it, and the patcher pulls it down.
+- [ ] Patch index format: JSON manifest listing versions, zip URLs, checksums
+- [ ] Patcher app: fetch index → compare version → download zip → extract over client dir
+- [ ] Version tracking: local version file in client dir, compare against index
+- [ ] Progress reporting (download %, extraction %)
+- [ ] `mimir pack` CLI command: build client env → zip → generate/update patch index JSON
+- [ ] Test loop: `mimir build --all` → `mimir pack` → patcher downloads + applies → client launches
+
+### P6: Edit in External Editor
+> Open a single table in an external SHN editor (e.g. Spark Editor) for quick visual edits.
+> Mimir builds the SHN to a temp file, opens the system file dialog / launches the editor,
+> waits for it to close, then re-imports just that one file back into the project. Useful for
+> visual spot-checking or leveraging existing editor UIs for quick tweaks without SQL.
+- [ ] `mimir open <project> <table>` CLI command
+- [ ] Build single table to temp SHN file
+- [ ] Launch with system default app (or configurable editor path)
+- [ ] Wait for process exit, then re-import the modified SHN back into the project
+- [ ] Diff detection: only update JSON if the file actually changed
+- [ ] Optional `--editor <path>` flag to specify editor binary
+
+### P7: Drop Table Consolidation
 > Text tables (spawn groups, NPC item lists, drop tables, etc.) are split into hundreds of separate
 > tables by source file, making SQL queries across them nearly impossible. Need a merge rule
 > (template action or import option) that consolidates all tables of the same schema into a single
@@ -188,7 +227,7 @@ Directory structure mirrors the source 9Data layout.
 - [ ] Ensure build can split back out to individual files
 - [ ] Test with MobRegen (spawns), NPCItemList, and drop table families
 
-### P5: QuestData Field Mapping
+### P8: QuestData Field Mapping
 > Map more of the 666-byte fixed data region beyond QuestID. Generate a binary dump for
 > collaborative hand-analysis against Spark Editor / known quest data. Expand FixedData
 > into proper named columns as offsets are identified.

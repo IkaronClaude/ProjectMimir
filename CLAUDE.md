@@ -13,6 +13,7 @@
 - **Run CLI**: `dotnet run --project src/Mimir.Cli -- <command>`
 - **Import (env-based)**: `dotnet run --project src/Mimir.Cli -- import test-project` (reads environments from mimir.json)
 - **Init template**: `dotnet run --project src/Mimir.Cli -- init-template test-project`
+- **Edit template**: `dotnet run --project src/Mimir.Cli -- edit-template test-project --table ColorInfo --conflict-strategy split`
 - **Build for env**: `dotnet run --project src/Mimir.Cli -- build test-project ./build/server --env server`
 - **Build all envs**: `dotnet run --project src/Mimir.Cli -- build test-project ./build --all`
 
