@@ -180,7 +180,24 @@ Directory structure mirrors the source 9Data layout.
 - [ ] Integration: `mimir build` → `docker compose restart gameserver` → verify server health
 - Note: BuildKit must be disabled for Windows containers (`set DOCKER_BUILDKIT=0`)
 
-### P4: CI/CD — Push-to-Deploy Pipeline
+### P4: Standalone Tool & Self-Contained Projects
+> **Goal:** Install mimir to PATH, then `mimir init "Project1"` creates a fully self-contained
+> project directory with everything needed: mimir.json, deploy/ (Dockerfiles, compose, server
+> executables copied in), data/, build/, overrides/. No symlinks — direct file copies for server
+> binaries. Then `cd Project1 && mimir build` builds both client and server, and Docker commands
+> just work.
+>
+> This is an architectural shift: mimir becomes a global tool, projects are standalone directories.
+> Current layout (mimir source repo contains test-project/) goes away.
+- [ ] `mimir init <project>` — prompts for server/client paths, creates project structure
+- [ ] Copy server executables (Account/, Login/, Zone*/, etc.) into project deploy/ dir
+- [ ] Copy database .bak files into project
+- [ ] Auto-generate Dockerfiles, docker-compose.yml, ServerInfo.txt inside project
+- [ ] `mimir build` (no args) — detects project from cwd, builds all envs
+- [ ] Publish as dotnet global tool or standalone exe for PATH install
+- [ ] Remove setup.ps1 (replaced by `mimir init`)
+
+### P4b: CI/CD — Push-to-Deploy Pipeline
 > The end goal: push a JSON change to a GitHub repo → CI validates + builds → server auto-restarts
 > with new data → client patch is packed and ready to download. Builds on the k8s setup from P3 —
 > the local cluster is our test target for the full CI/CD loop before going to production.
