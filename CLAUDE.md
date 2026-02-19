@@ -10,14 +10,14 @@
 
 - **Build**: `dotnet build Mimir.sln`
 - **Test**: `dotnet test Mimir.sln`
-- **Run CLI**: `dotnet run --project src/Mimir.Cli -- <command>`
-- **Import (env-based)**: `dotnet run --project src/Mimir.Cli -- import test-project` (reads environments from mimir.json)
-- **Init template**: `dotnet run --project src/Mimir.Cli -- init-template test-project`
-- **Edit template**: `dotnet run --project src/Mimir.Cli -- edit-template test-project --table ColorInfo --conflict-strategy split`
-- **Build for env**: `dotnet run --project src/Mimir.Cli -- build test-project ./build/server --env server`
-- **Build all envs**: `dotnet run --project src/Mimir.Cli -- build test-project ./build --all`
-- **Pack client patches**: `dotnet run --project src/Mimir.Cli -- pack test-project ./patches` (incremental zip + patch-index.json)
-- **Pack with URL prefix**: `dotnet run --project src/Mimir.Cli -- pack test-project ./patches --base-url https://patches.example.com/`
+- **Run CLI**: `dotnet run --project src/Mimir.Cli -- <command>` (run from inside the project dir; CWD walks up to find mimir.json like git)
+- **Import**: `dotnet run --project src/Mimir.Cli -- import`
+- **Init template**: `dotnet run --project src/Mimir.Cli -- init-template`
+- **Edit template**: `dotnet run --project src/Mimir.Cli -- edit-template --table ColorInfo --conflict-strategy split`
+- **Build for env**: `dotnet run --project src/Mimir.Cli -- build --env server`
+- **Build all envs**: `dotnet run --project src/Mimir.Cli -- build --all`
+- **Pack client patches**: `dotnet run --project src/Mimir.Cli -- pack --env client` (incremental zip + patch-index.json)
+- **Override project**: add `-p <path>` / `--project <path>` to any command
 
 ## Data Locations
 
