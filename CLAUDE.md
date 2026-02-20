@@ -22,7 +22,7 @@
 ## Data Locations
 
 - **Server**: `Z:/Server/` (~218 SHN + hundreds of .txt) — import path for `server` environment
-- **Client**: `Z:/Client/` — import path for `client` environment. SHN files are in `ressystem/` subdirectory.
+- **Client**: `Z:/ClientSource/ressystem` — import path for `client` environment (unmodified original SHN files, ground truth). `Z:/Client/` is the already-patched game client — do NOT use as import source.
 - **Overlap**: 118 shared SHN files, 102 server-only, 39 client-only
 - Client-only files are mostly UI/text/visual (BasicInfo*, TextData*, FontSet, DamageEffect, etc.)
 - `.shd` files in ressystem are height maps / walkability grids, not data tables

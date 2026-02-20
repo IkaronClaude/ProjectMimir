@@ -244,6 +244,7 @@ Directory structure mirrors the source 9Data layout.
 * \[x] 9 integration tests covering full pack lifecycle (first pack, incremental, no-change, base-url)
 * \[ ] Test loop: `mimir build --all` → `mimir pack` → patcher downloads + applies → client launches
 * \[ ] Progress reporting (download %, extraction %)
+* \[ ] **Fix packer base state** — on a fresh project (patch v1, no previous pack), `mimir pack` includes all 174 client SHNs even though the client is already up to date. **Possibly already fixed** — the cryptHeader bug (server's XOR key used for client builds) would have caused all 174 merged SHNs to differ from `Z:/ClientSource` originals, inflating the diff. Now that cryptHeaders are captured per-env, verify with a fresh `import --reimport` → `build --all` → `pack`: if the output is byte-identical to `Z:/ClientSource`, patch v1 should be 0 files. If files still differ, investigate remaining causes (e.g. checksum field, defaultRecordLength). Separately consider whether patch v1 baseline should be seeded from `Z:/ClientSource` for a clean first-run experience.
 
 ### P6: Edit in External Editor
 
@@ -478,6 +479,21 @@ Composable CLI commands for common multi-step operations:
 * Intellisense / autocomplete (item IDs, mob IDs, map names from loaded data)
 * Hover info showing resolved references (hover item ID → show item name/stats)
 * Linting integration (red squiggles for broken references)
+
+---
+
+## Open Issues
+
+### Zone.exe crash — GamigoZR dependency ✓ RESOLVED
+
+Zone.exe crashes at startup (`ShineObjectManager::som_Initialize` returns `0xFFFFFFFF`) without GamigoZR running. GamigoZR is a core Gamigo service that must be running before Zone.exe starts — once running, all Zone log files (Assert, ExitLog, Msg, etc.) begin populating normally.
+
+**Fix applied:**
+- `start-process.ps1` — registers and starts `GamigoZR` service before Zone.exe for all Zone processes
+- `Dockerfile.server` — added `COPY server-files/GamigoZR/ C:/server/GamigoZR/`
+- To deploy: `xcopy /E /I Z:\Server\GamigoZR deploy\server-files\GamigoZR` then `rebuild-game.bat`
+
+Stack dump for reference: `20120409-Hero[Release]-1`, `ProtocolPacket::pp_SetPacketLen[4294967295]`, `ShineObjectManager::som_Initialize[4294967295]`
 
 ---
 
