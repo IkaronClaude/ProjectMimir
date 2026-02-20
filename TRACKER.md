@@ -391,6 +391,16 @@ String columns: `-` when empty = key/index, `""` when empty = free text.
 
 ## Stretch Goals
 
+### Hot-swap Build (Build While Server Running)
+
+Windows Docker bind-mounts lock the mounted directory even `:ro`, so `mimir build --all` can't write to `build/server/` while containers are up. Planned approach:
+
+- **Separate deploy snapshot**: on deploy, copy `build/` → `deployed/` (or similar), then stop containers, swap Docker mounts to `deployed/`, restart. `build/` is then always free to rebuild at any time without touching the running server.
+- Deploy step: stop → copy `build/` to `deployed/` → start (mounts `deployed/`, not `build/`)
+- This also cleanly separates "what was last deployed" from "what's being worked on"
+
+
+
 ### Data Validation / Linting
 
 Built-in rules that detect common mistakes and inconsistencies:
