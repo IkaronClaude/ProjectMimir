@@ -244,7 +244,7 @@ Directory structure mirrors the source 9Data layout.
 * \[x] 9 integration tests covering full pack lifecycle (first pack, incremental, no-change, base-url)
 * \[ ] Test loop: `mimir build --all` → `mimir pack` → patcher downloads + applies → client launches
 * \[ ] Progress reporting (download %, extraction %)
-* \[ ] **Fix packer base state** — on a fresh project (patch v1, no previous pack), `mimir pack` includes all 174 client SHNs even though the client is already up to date. **Possibly already fixed** — the cryptHeader bug (server's XOR key used for client builds) would have caused all 174 merged SHNs to differ from `Z:/ClientSource` originals, inflating the diff. Now that cryptHeaders are captured per-env, verify with a fresh `import --reimport` → `build --all` → `pack`: if the output is byte-identical to `Z:/ClientSource`, patch v1 should be 0 files. If files still differ, investigate remaining causes (e.g. checksum field, defaultRecordLength). Separately consider whether patch v1 baseline should be seeded from `Z:/ClientSource` for a clean first-run experience.
+* \[x] **Fix packer base state** — `mimir import` now seeds `.mimir-pack-manifest.json` (v0) by hashing all source files from each env's `importPath` at the end of import. Pack manifest root is auto-derived: if `importPath` parent is not a drive root (e.g. `Z:/ClientSource/ressystem` → root `Z:/ClientSource`), relative paths match build output (`ressystem/ItemInfo.shn`); if parent IS a drive root (e.g. `Z:/Server`) importPath itself is used. `mimir pack` then diffs against this baseline so patch v1 only contains actual changes. Use `--retain-pack-baseline` on import/reimport to skip the reseed. Also added `deploy/update.bat` (quick hot-swap: build → pack → robocopy → restart game servers, no SQL/Docker rebuild).
 
 ### P6: Edit in External Editor
 
@@ -392,13 +392,11 @@ String columns: `-` when empty = key/index, `""` when empty = free text.
 
 ## Stretch Goals
 
-### Hot-swap Build (Build While Server Running)
+### Hot-swap Build (Build While Server Running) ✓ DONE
 
-Windows Docker bind-mounts lock the mounted directory even `:ro`, so `mimir build --all` can't write to `build/server/` while containers are up. Planned approach:
+Windows Docker bind-mounts lock the mounted directory even `:ro`, so `mimir build --all` can't write to `build/server/` while containers are up.
 
-- **Separate deploy snapshot**: on deploy, copy `build/` → `deployed/` (or similar), then stop containers, swap Docker mounts to `deployed/`, restart. `build/` is then always free to rebuild at any time without touching the running server.
-- Deploy step: stop → copy `build/` to `deployed/` → start (mounts `deployed/`, not `build/`)
-- This also cleanly separates "what was last deployed" from "what's being worked on"
+**Implemented:** `build/server/` → `test-project/deployed/server/` robocopy snapshot on every deploy/restart. Containers mount `deployed/`, leaving `build/` always free. `mimir build` can run at any time without stopping the server — just run `restart-game.bat` after to push the new data.
 
 
 
@@ -483,6 +481,62 @@ Composable CLI commands for common multi-step operations:
 ---
 
 ## Open Issues
+
+### Zone.exe needs write access to SubAbStateClass.txt ✓ RESOLVED
+
+Zone.exe opens `9Data/SubAbStateClass.txt` with WriteAppend permissions at startup. Volume was mounted `:ro`, blocking the open.
+
+**Fix applied:** Implemented `build/ → deployed/` snapshot copy as part of deploy workflow. Volume now mounts `deployed/server/9Data` read-write.
+- `docker-compose.yml` — changed mount to `../test-project/deployed/server/9Data:C:/server/9Data` (no `:ro`)
+- `deploy.bat` — robocopy `build/server → deployed/server` before `docker compose up`
+- `restart-game.bat` — same robocopy before restart, so `mimir build` + `restart-game.bat` is the full update cycle
+- `build/` remains free to rebuild while containers are running (hot-swap ready)
+
+### Build output 9Data folder is polluted with non-data files
+
+`build/server/9Data/` contains files that don't belong in the game data directory — e.g. `ServerInfo.txt`, `.exe` files, `.ps1` scripts, and potentially others. These are likely being included because Mimir's import scans the server directory and picks up everything it can parse, including config/tool files that happen to live alongside the real data.
+
+**Impact:** The `deployed/server/9Data/` snapshot (and previously the read-only mount) exposes these files to the containers, which is at minimum confusing and could interfere with server startup if an exe or config file shadows something the game expects.
+
+**To investigate:**
+- List what non-SHN/non-txt files are in `build/server/9Data/`
+- Trace where they come from in the import (which source directory, which provider picks them up)
+- Decide on fix: exclusion patterns in the import scan, a gitignore-style filter in `mimir.json` or `mimir.template.json`, or a post-build cleanup step
+
+### ShineTable output missing preprocessor directives
+
+Mimir's `ShineTableFormatParser.Write` outputs bare `#table`/`#columntype`/`#columnname`/`#record` blocks with no preprocessor directives. Original files may have directives at the top like:
+
+```
+#ignore \o042
+#exchange # \x20
+```
+
+These are parsed and applied during import (handled by `Preprocessor`) but never re-emitted on write. If the game exe's parser requires these directives to correctly handle quoted strings or special characters in the data, their absence could cause parse errors or data corruption.
+
+**To investigate:**
+- Check which original server files have `#ignore`/`#exchange` directives (grep `Z:/Server`)
+- Determine if any data values in those files contain the affected characters (e.g. `\o042` = `"` double-quote)
+- If character-mangling directives are present: either re-emit them on write, or ensure Mimir has already applied them to the stored values (so the raw data no longer needs them)
+
+### ItemInfo/ItemInfoServer column order mismatch
+
+Zone.exe (and likely others) exit with:
+```
+ItemDataBox::idb_Load : iteminfo iteminfoserver Order not match[180]
+```
+
+The game loads `ItemInfo.shn` and `ItemInfoServer.shn` and cross-validates their column order. `[180]` is the column index where they diverge. This suggests that after merge+split, the column ordering in one or both files differs from the originals.
+
+**Likely cause:** `TableSplitter.Split` rebuilds columns from the merged schema, which may reorder or drop env-specific columns. Column 180 in ItemInfo/ItemInfoServer is where the split columns (server-only vs client-only) begin diverging from the merged schema.
+
+**To investigate:**
+- Compare column order of `Z:/Server/9Data/Shine/ItemInfo.shn` vs Mimir's `build/server/9Data/Shine/ItemInfo.shn` (column 180+)
+- Same for `ItemInfoServer.shn`
+- Check whether `TableSplitter` preserves original column order per env (from `EnvMergeMetadata.ColumnOrder`)
+- Check whether the `conflictStrategy: "split"` columns are being output in the right order
+
+**Note:** MobChat error in same log is from a prior session before the `#RecordIn` fix was deployed.
 
 ### Zone.exe crash — GamigoZR dependency ✓ RESOLVED
 
