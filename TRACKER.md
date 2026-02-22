@@ -164,7 +164,27 @@ Directory structure mirrors the source 9Data layout.
 
 See backlog item "SHN file inspection CLI commands" for full spec.
 
-### 🔥 P0b: ItemInfo/ItemInfoServer Row Order Mismatch (Zone Blocker)
+### 🔥 P0b: ItemInfo/ItemInfoServer Row Order + ChargedEffect + ActionViewInfo Missing
+
+Zone.exe currently fails to start with:
+```
+ItemDataBox::idb_Load : iteminfo iteminfoserver Order not match[3228]
+ChargedItemEffectDataBox<T>::cideb_Load : Same Handle[1738]
+Fail to read 'ActionViewInfo.shn'[0]
+```
+
+Three files confirmed as broken by Mimir's output — copying originals from `Z:/Server` restores Zone startup:
+- **ItemInfo.shn / ItemInfoServer.shn** — row order mismatch. Game requires rows at matching positions across both files. `[3228]` is a row number. Mimir may reorder rows by key during build.
+- **ChargedEffect.shn** — `Same Handle[1738]` suggests duplicate row key after rebuild; likely a row ordering or deduplication issue in the merged/split table.
+- **ActionViewInfo.shn** — **completely missing from build output**. Investigate why Mimir drops it (missing from template, env filter issue, or sourceRelDir problem similar to the shader/ressystem bug).
+
+Additionally from Field.txt:
+```
+FieldContainer::fc_Load : Wrong Item ID[eck]
+```
+Confirmed workaround: copying `World/Field.txt` from `Z:/Server` directly fixes this. Underlying ShineTable write issue tracked in P0c.
+
+**Workaround in place**: copy ItemInfo.shn, ItemInfoServer.shn, Field.txt, ChargedEffect.shn, ActionViewInfo.shn from originals → Zone starts.
 
 > Zone.exe is currently non-functional. Fix as soon as `mimir shn --diff` exists to
 > confirm the root cause. See open issue "ItemInfo/ItemInfoServer row order mismatch".
@@ -623,6 +643,26 @@ Zone.exe opens `9Data/SubAbStateClass.txt` with WriteAppend permissions at start
 - List what non-SHN/non-txt files are in `build/server/9Data/`
 - Trace where they come from in the import (which source directory, which provider picks them up)
 - Decide on fix: exclusion patterns in the import scan, a gitignore-style filter in `mimir.json` or `mimir.template.json`, or a post-build cleanup step
+
+### SHN ViewData Checksum — possible in-header integrity value
+
+Zone log shows informational messages (not errors) for ~14 `*View.shn` files:
+```
+[Message] SHN - ViewData Checksum - AbStateView.shn
+[Message] SHN - ViewData Checksum - ActiveSkillView.shn
+... (ItemShopView, ItemViewInfo, MapViewInfo, MobViewInfo, NPCViewInfo, etc.)
+```
+These files likely contain an embedded checksum of their own content (in the data or header). Mimir preserves the `cryptHeader` bytes verbatim but if a checksum covers the decrypted record data, Mimir's rebuilt files (with zeroed string padding) will have a wrong checksum. This could cause silent data corruption or rejection in the client. Needs investigation of SHN header format to determine if/where a checksum field lives.
+
+### Client "illegally manipulated" hash check failure
+
+The game client reports "client has been illegally manipulated" when launched against Mimir-built client SHN patches. Root causes:
+1. **Roundtrip fidelity** — 50 SHN files are rebuilt with zeroed string padding instead of the original garbage bytes, producing different hashes than the original files the client's integrity checker expects.
+2. **Version mismatch** — ClientSource files may be a different version than `Z:/Client`. Using correct 2016 source files should resolve the version aspect.
+
+The 32 files differing between `Z:/deployed/server/` and `Z:/Client/ressystem/` are **expected** — intentional server/client divergence on merged tables. Not a Mimir bug.
+
+Fix priority: resolve roundtrip fidelity (preserve original string padding bytes) or confirm correct source version eliminates the problem.
 
 ### ShineTable output missing preprocessor directives
 
