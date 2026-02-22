@@ -166,30 +166,51 @@ Implemented. Commands:
 - `mimir shn <file> --diff <file2>` — positional row diff with reorder heuristic
 - `mimir shn <file> --decrypt-to <out>` — write decrypted bytes for hex analysis
 
-### 🔥 P0b: ItemInfo/ItemInfoServer Row Order + ChargedEffect + ActionViewInfo Missing
+### ✅ P0b: Server Full Roundtrip — DONE
 
-Zone.exe currently fails to start with:
-```
-ItemDataBox::idb_Load : iteminfo iteminfoserver Order not match[3228]
-ChargedItemEffectDataBox<T>::cideb_Load : Same Handle[1738]
-Fail to read 'ActionViewInfo.shn'[0]
-```
+Zone.exe starts cleanly on a fully Mimir-built server. All server-side blockers resolved:
 
-Three files confirmed as broken by Mimir's output — copying originals from `Z:/Server` restores Zone startup:
-- **ItemInfo.shn / ItemInfoServer.shn** — row order mismatch. Game requires rows at matching positions across both files. `[3228]` is a row number. Mimir may reorder rows by key during build.
-- **ChargedEffect.shn** — `Same Handle[1738]` suggests duplicate row key after rebuild; likely a row ordering or deduplication issue in the merged/split table.
-- **ActionViewInfo.shn** — **completely missing from build output**. Investigate why Mimir drops it (missing from template, env filter issue, or sourceRelDir problem similar to the shader/ressystem bug).
+- **ItemInfo.shn / ItemInfoServer.shn** — ✅ row order fixed (TableMerger single-pass over target.Data)
+- **ChargedEffect.shn** — ✅ data-identical to source; `Same Handle[1738]` is a pre-existing duplicate in the original server files that Zone tolerates as a warning
+- **Field.txt** — ✅ fixed (EUC-KR encoding + INDEX vs STRING[N] round-trip)
+- **ActionViewInfo.shn** — ⚠️ built to `9Data/Shine/View/` instead of `9Data/Shine/`; Zone loads from the View path anyway. See P0e for proper duplicate-path handling.
 
-Additionally from Field.txt:
-```
-FieldContainer::fc_Load : Wrong Item ID[eck]
-```
-Confirmed workaround: copying `World/Field.txt` from `Z:/Server` directly fixes this. Underlying ShineTable write issue tracked in P0c.
+### 🔥 P0f: Client "Illegally Manipulated" Hash Check Failure
 
-**Workaround in place**: copy ItemInfo.shn, ItemInfoServer.shn, Field.txt, ChargedEffect.shn, ActionViewInfo.shn from originals → Zone starts.
+Client rejects with "client has been illegally manipulated" even with an unpatched client and even when Mimir's build is copied 1:1 over `ressystem/`.
 
-> Zone.exe is currently non-functional. Fix as soon as `mimir shn --diff` exists to
-> confirm the root cause. See open issue "ItemInfo/ItemInfoServer row order mismatch".
+**How the check works:**
+- Client hashes its own SHN files and sends hashes to the server
+- Server verifies them against expected hashes stored in the game database
+- Client-only SHNs are NOT hash-checked
+- String padding (0 bytes vs garbage) is irrelevant as long as both sides use the same version — hashes just need to match the DB's expected values
+
+**Likely root cause: version mismatch between DB and client source**
+- The `.bak` files used to restore the game DB were probably from a different client version than `Z:/ClientSource/ressystem`
+- The DB's expected hash table contains hashes for the wrong version of the files
+- This would cause failure even with the original unmodified client files
+
+**Plan:**
+1. Packet sniff login with original unmodified client — capture the hashes it sends to the server
+2. Packet sniff login with Mimir-built client — capture hashes Mimir's files produce
+3. Compare both sets: identify which files differ, whether it's a subset of the 49 differing files or something else
+4. If original also fails → DB/client version mismatch, not a Mimir issue; find matching client version or update DB hash table
+5. If only Mimir fails → specific files Mimir rebuilds incorrectly; fix those files' roundtrip fidelity
+
+### 🔥 P0e: Same-Named SHN Files at Multiple Paths Not Handled
+
+Some SHN files exist at multiple paths with the same table name (e.g. `ActionViewInfo.shn` in both `9Data/Shine/` and `9Data/Shine/View/`). They may be identical duplicates or genuinely different tables.
+
+**Current behavior**: `ReadAllTables` uses `tables[tableName] = ...` so the last file enumerated wins. `EnumerateFiles(AllDirectories)` walks depth-first, so the deeper path (`View/`) always clobbers the shallower one (`Shine/`). The built file lands in the wrong location.
+
+**Required behavior**:
+- Detect when the same table name appears at multiple paths during import
+- Import each as a separate entry (keyed by path, not just table name) so both are tracked
+- Build each to its original relative path (both `Shine/ActionViewInfo.shn` and `Shine/View/ActionViewInfo.shn`)
+- If tables differ: they're genuinely separate and need separate JSON files
+- If tables are identical: still build to both paths (the duplicate may be load-order dependent)
+
+**Workaround**: Manually edit `sourceRelDir` in the affected table's JSON, or copy from originals.
 
 ### 🔥 P0d: ItemDataBox load order issue (after fieldInfo)
 
