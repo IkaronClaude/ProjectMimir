@@ -498,9 +498,28 @@ Similarly, `mimir init` should scaffold a `mimir.bat` in the new project directo
 
 `deploy.bat` currently calls `rebuild-sql.bat` which wipes and restores all game databases from `.bak` files, destroying any runtime state (character data, account data, etc.). This is only appropriate for a first-time setup or an intentional reset — not for a routine full deploy. `deploy.bat` should check whether the SQL container/databases already exist and skip the SQL rebuild if so, or split into separate `deploy-first-time.bat` vs `deploy.bat` scripts with clearly different semantics.
 
+### SQL password management
+
+No good way to set/change the SQL Server password used by the game server and Docker setup. Currently hardcoded in deploy scripts and `ServerInfo.txt`. Need a proper mechanism — e.g. `mimir env server set sql-password <pw>` or a dedicated secrets file — so the password can be configured per-project without editing raw config files.
+
+### Split `mimir` CLI into focused sub-tools
+
+As the CLI grows, consider splitting into separate executables by domain:
+- `mimir env` — environment management
+- `mimir sql` — query/edit/shell
+- `mimir build` / `mimir import` — data pipeline
+- `mimir deploy` — Docker deployment lifecycle
+- `mimir patch` — pack/patch index management
+
+Each could be a standalone dotnet tool, composable via scripts. Keeps each tool small and focused, easier to document and discover. Low priority — only worth doing once the feature set is stable.
+
+### Reimport to dummy dir for more accurate baseline seeding
+
+Currently `mimir build` seeds the pack baseline from the actual build output directory, which means the baseline reflects Mimir's rebuilt files (not the original source files). A more accurate baseline — useful for measuring true diff vs. the stock client — could be produced by running a temporary import+build into a throwaway directory using the original source files, then seeding from that. This would let patch v1 contain only files the user actually changed vs. vanilla, even accounting for roundtrip fidelity. Low priority for now; the current build-output approach is pragmatic and produces correct incremental patches.
+
 ### `mimir pack` should auto-seed baseline if manifest missing
 
-Currently if no pack manifest exists, `mimir pack` treats all files as new and produces a patch containing everything. Instead, if the env has `seedPackBaseline: true` and `importPath` is set, `mimir pack` should automatically run baseline seeding first (same logic as post-import seed), then diff against it — so the first pack after a fresh import or manual manifest deletion still produces a minimal patch. Makes the workflow more forgiving without requiring the user to remember to run import first.
+Currently if no pack manifest exists, `mimir pack` treats all files as new and produces a patch containing everything. Instead, `mimir pack` should automatically seed the baseline from the current build output (same logic as `mimir build` post-build seeding), then diff against it — producing a 0-file patch on the first run. This makes the workflow forgiving: even if the manifest was deleted or never created, the user can just run `mimir pack` and it self-heals without needing to re-run `mimir build`.
 
 ### patch-index.json version collision on baseline reset
 
