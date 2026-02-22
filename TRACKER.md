@@ -488,6 +488,10 @@ Currently the server env `buildPath` is set to `build/server/`, so build output 
 
 Related: a separate **deploy path** is needed for server-side non-data files (exes, DBs, scripts, GamigoZR, etc.) that live one directory above 9Data. The deploy path env config would let `mimir deploy` (or `update.bat`) copy binaries + config files from the deploy path alongside the built 9Data snapshot. This cleanly separates "data Mimir owns" from "binaries Mimir doesn't touch".
 
+### Docker containers should exit when their game process exits
+
+Currently containers stay alive even after the game server process (Login.exe, Zone.exe, etc.) shuts down or crashes. Once the deployment setup is stable, containers should be configured to exit when their main process does — so `docker ps` reflects actual server health and `docker compose up` restarts crashed processes correctly. Likely just a matter of ensuring the entrypoint doesn't swallow exit codes and that `restart: on-failure` or similar policy is set in `docker-compose.yml`.
+
 ### Deploy scripts should be callable from inside the project folder
 
 Currently `deploy.bat`, `update.bat`, etc. live in `deploy/` and must be run from there (they use relative paths). They should be callable from the project root via a `mimir-deploy.bat` shim (or similar) that forwards to the real scripts with correct working directory context.
