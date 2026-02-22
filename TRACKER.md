@@ -303,6 +303,26 @@ Directory structure mirrors the source 9Data layout.
 
 ---
 
+### SHN file inspection CLI commands
+
+Quick `mimir shn` subcommands for inspecting raw SHN files without importing them into a project — useful for debugging, diffing, and verifying build output:
+- `mimir shn <file> --schema` — print column names, types, lengths
+- `mimir shn <file> --row-count` — print number of rows
+- `mimir shn <file> --head <N>` / `--tail <N>` — print first/last N rows as a table
+- `mimir shn <file> --skip <N> --take <M>` — slice rows
+- `mimir shn <file1> <file2> --diff` — compare two SHN files (schema + row-by-row)
+- `mimir shn <file> --decrypt-to <outfile>` — write decrypted raw bytes for hex analysis
+
+Especially useful for diagnosing row order mismatches, schema differences, and roundtrip fidelity issues without needing a full project import.
+
+## Sub-Projects / Future Projects
+
+### Game Management API (separate project)
+
+A Docker container exposing an HTTP API over the game databases — account creation, character queries, GM tools, server status, etc. Would form the backend for a web panel or admin UI. Likely a separate repo/project rather than part of Mimir itself, but would depend on the same Docker Compose network and SQL Server setup. Worth building once the server deployment is stable and the database schema is well understood.
+
+---
+
 ## Shelved (Revisit Later)
 
 ### SHN Type Refinements
@@ -584,12 +604,17 @@ These are parsed and applied during import (handled by `Preprocessor`) but never
 - Determine if any data values in those files contain the affected characters (e.g. `\o042` = `"` double-quote)
 - If character-mangling directives are present: either re-emit them on write, or ensure Mimir has already applied them to the stored values (so the raw data no longer needs them)
 
-### ItemInfo/ItemInfoServer column order mismatch
+### ItemInfo/ItemInfoServer row order mismatch ⚠️ BLOCKING ZONE
 
-Zone.exe (and likely others) exit with:
+Zone.exe currently fails to start with:
 ```
-ItemDataBox::idb_Load : iteminfo iteminfoserver Order not match[180]
+ItemDataBox::idb_Load : iteminfo iteminfoserver Order not match[3228]
 ```
+`[3228]` is likely a **row number**, not a column index. The game engine requires ItemInfo.shn and ItemInfoServer.shn to have matching rows at the same row numbers — i.e. the row for item ID X must be at the same position in both files. Mimir correlates rows by key columns (correct relational approach), but the built files may reorder rows relative to the originals, breaking the engine's assumption.
+
+**To verify**: Decrypt and compare built `build/server/9Data/Shine/ItemInfo.shn` and `ItemInfoServer.shn` row order against the originals in `Z:/Server/9Data/Shine/`. If row order differs, the fix is to preserve original row order during build (sort by original row index, not by key).
+
+Fallback: user can supply a known-good server release for cross-reference if needed.
 
 The game loads `ItemInfo.shn` and `ItemInfoServer.shn` and cross-validates their column order. `[180]` is the column index where they diverge. This suggests that after merge+split, the column ordering in one or both files differs from the originals.
 
