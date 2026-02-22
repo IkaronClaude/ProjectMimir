@@ -157,6 +157,18 @@ Directory structure mirrors the source 9Data layout.
 > (import → edit → build → deploy) that handles all data correctly is worth more than
 > half-finished advanced features.
 
+### 🔥 P0: SHN File Inspection CLI (`mimir shn`)
+
+> Needed immediately as a diagnostic tool — without it, investigating the row order blocker
+> and other SHN fidelity issues requires manual hex work. Build this first.
+
+See backlog item "SHN file inspection CLI commands" for full spec.
+
+### 🔥 P0b: ItemInfo/ItemInfoServer Row Order Mismatch (Zone Blocker)
+
+> Zone.exe is currently non-functional. Fix as soon as `mimir shn --diff` exists to
+> confirm the root cause. See open issue "ItemInfo/ItemInfoServer row order mismatch".
+
 ### P1: Text Table String Length Bug
 
 > Configtable #DEFINE STRING columns hardcode length 256, silently truncating longer strings.
