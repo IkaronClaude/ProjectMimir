@@ -169,6 +169,26 @@ See backlog item "SHN file inspection CLI commands" for full spec.
 > Zone.exe is currently non-functional. Fix as soon as `mimir shn --diff` exists to
 > confirm the root cause. See open issue "ItemInfo/ItemInfoServer row order mismatch".
 
+### 🔥 P0d: ItemDataBox load order issue (after fieldInfo)
+
+Confirmed sequence of blockers so far:
+1. ItemInfo/ItemInfoServer row order → fix in P0b
+2. fieldInfo (ShineTable) loading → **confirmed fixed** by copying `World/Field.txt` from `Z:/Server` directly (workaround). Underlying ShineTable output issues still tracked in P0c.
+3. **Next**: ItemDataBox load order error — another load ordering issue in Zone startup after fieldInfo loads. Needs investigation once P0b is deployed.
+
+### 🔥 P0c: ShineTable Output Issues (Next Zone Blocker After ItemInfo)
+
+> Once ItemInfo row order is fixed, Zone.exe will likely fail on ShineTable (.txt) loading
+> (fieldInfo and similar). Three known issues:
+
+**1. Lowercase directives** — Mimir writes `#record`, `#columntype`, `#columnname`, `#table` etc. in lowercase. Original server files use uppercase (`#Record`, `#ColumnType`, `#ColumnName`, `#Table`). Unknown whether the game parser is case-sensitive, but safest to match original casing exactly.
+
+**2. `#Exchange` / `#Delimiter` not supported** — Some files use `#Delimiter \x20` (space as field delimiter) combined with `#Exchange # \x20` (swap `#` and space so `#` can appear in data). Mimir currently ignores these directives entirely, which will corrupt any file that uses them on write.
+
+**3. `#Ignore \o042` not re-emitted** — `\o042` is `"` (double-quote). The `#Ignore` directive tells the parser to treat that character as invisible/escaped. Mimir reads and applies it during import (via Preprocessor) but never re-emits it on write, so rebuilt files may fail to parse if any data values contain double-quotes.
+
+**To investigate:** Grep `Z:/Server` for `#Exchange`, `#Delimiter`, `#Ignore` to see which files use them and whether any affected data values actually contain the characters in question. Fix lowercase directives unconditionally; fix Exchange/Ignore only if grep confirms real-world usage.
+
 ### P1: Text Table String Length Bug
 
 > Configtable #DEFINE STRING columns hardcode length 256, silently truncating longer strings.
@@ -519,6 +539,10 @@ Composable CLI commands for common multi-step operations:
 Currently the server env `buildPath` is set to `build/server/`, so build output lands at `build/server/9Data/Shine/ItemInfo.shn`. The `buildPath` should be the 9Data dir itself — `build/server/9Data` — so that files land flat in the right place without the extra `9Data` prefix in the path. Requires updating default in `mimir env server init` and adjusting any snapshot/robocopy commands that reference the old layout.
 
 Related: a separate **deploy path** is needed for server-side non-data files (exes, DBs, scripts, GamigoZR, etc.) that live one directory above 9Data. The deploy path env config would let `mimir deploy` (or `update.bat`) copy binaries + config files from the deploy path alongside the built 9Data snapshot. This cleanly separates "data Mimir owns" from "binaries Mimir doesn't touch".
+
+### Auto-archive old log files on container restart
+
+On container restart, existing game server log files (Assert logs, ExitLogs, Msg logs, etc.) should be moved into an `old/` or timestamped subfolder rather than being appended to or overwritten. Makes it much easier to isolate logs from the current run vs. previous runs.
 
 ### Docker containers should exit when their game process exits
 
