@@ -157,12 +157,14 @@ Directory structure mirrors the source 9Data layout.
 > (import → edit → build → deploy) that handles all data correctly is worth more than
 > half-finished advanced features.
 
-### 🔥 P0: SHN File Inspection CLI (`mimir shn`)
+### ✅ P0: SHN File Inspection CLI (`mimir shn`) — DONE
 
-> Needed immediately as a diagnostic tool — without it, investigating the row order blocker
-> and other SHN fidelity issues requires manual hex work. Build this first.
-
-See backlog item "SHN file inspection CLI commands" for full spec.
+Implemented. Commands:
+- `mimir shn <file>` — schema (default)
+- `mimir shn <file> --row-count`
+- `mimir shn <file> --head <N>` / `--tail <N>` / `--skip <N> --take <M>`
+- `mimir shn <file> --diff <file2>` — positional row diff with reorder heuristic
+- `mimir shn <file> --decrypt-to <out>` — write decrypted bytes for hex analysis
 
 ### 🔥 P0b: ItemInfo/ItemInfoServer Row Order + ChargedEffect + ActionViewInfo Missing
 
@@ -608,6 +610,16 @@ If no pack manifest exists or there are no changed files, `mimir pack` currently
 ### Overrides must never be included in the pack baseline
 
 `mimir build` currently seeds the pack baseline from the full build output directory, which includes any files copied from the overrides folder. This means override files are "known" to the baseline and only show up in a patch if they subsequently change. Instead, the baseline should only cover files produced by the core build (tables + copyFile actions) — override files should always be excluded from baseline seeding so that the first patch after a build always delivers them to players. After that first delivery they diff normally like everything else.
+
+### Quest "available" tab shows fewer quests than expected
+
+Early-game quests are present and functional — NPCs display and serve them correctly when clicked. However, several quests that should appear in the client's "available" quests tab do not show up (e.g. Archer sees only a few quests through level 5 rather than the expected set).
+
+This is a **client-side display issue**, not a server data problem. Likely causes:
+- **Outdated client files**: The client's `QuestData.shn` (or related quest-display files) may be from a different game version than the server. If the client's local quest conditions/availability data doesn't match what the server expects, the "available" filter logic may silently exclude quests.
+- **Client-side QuestData.shn built by Mimir**: If the client env includes QuestData and Mimir rebuilt it, roundtrip fidelity issues (fixed-data region, PineScript strings) could affect the availability conditions the client evaluates.
+
+**To investigate**: Compare client's `QuestData.shn` (from `Z:/ClientSource`) against `Z:/Server/9Data/Shine/QuestData.shn` using `mimir shn --diff`. If they differ, that's the source mismatch. Also check whether client `QuestData.shn` is included in the client build output at all.
 
 ### patch-index.json version collision on baseline reset
 
