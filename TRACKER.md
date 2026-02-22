@@ -480,6 +480,40 @@ Composable CLI commands for common multi-step operations:
 
 ---
 
+## Backlog
+
+### Server build path should target 9Data directly
+
+Currently the server env `buildPath` is set to `build/server/`, so build output lands at `build/server/9Data/Shine/ItemInfo.shn`. The `buildPath` should be the 9Data dir itself — `build/server/9Data` — so that files land flat in the right place without the extra `9Data` prefix in the path. Requires updating default in `mimir env server init` and adjusting any snapshot/robocopy commands that reference the old layout.
+
+Related: a separate **deploy path** is needed for server-side non-data files (exes, DBs, scripts, GamigoZR, etc.) that live one directory above 9Data. The deploy path env config would let `mimir deploy` (or `update.bat`) copy binaries + config files from the deploy path alongside the built 9Data snapshot. This cleanly separates "data Mimir owns" from "binaries Mimir doesn't touch".
+
+### Deploy scripts should be callable from inside the project folder
+
+Currently `deploy.bat`, `update.bat`, etc. live in `deploy/` and must be run from there (they use relative paths). They should be callable from the project root via a `mimir-deploy.bat` shim (or similar) that forwards to the real scripts with correct working directory context.
+
+Similarly, `mimir init` should scaffold a `mimir.bat` in the new project directory that forwards all commands to the mimir executable used to run `init` — so `mimir.bat build`, `mimir.bat import`, etc. work from the project root without needing to know the install path. The init command already writes a basic `mimir.bat`, but it should capture the actual invocation path (e.g. `dotnet run --project ...` or the installed exe path) rather than assuming `mimir` is in PATH.
+
+### deploy.bat wipes SQL database unconditionally
+
+`deploy.bat` currently calls `rebuild-sql.bat` which wipes and restores all game databases from `.bak` files, destroying any runtime state (character data, account data, etc.). This is only appropriate for a first-time setup or an intentional reset — not for a routine full deploy. `deploy.bat` should check whether the SQL container/databases already exist and skip the SQL rebuild if so, or split into separate `deploy-first-time.bat` vs `deploy.bat` scripts with clearly different semantics.
+
+### `mimir pack` should auto-seed baseline if manifest missing
+
+Currently if no pack manifest exists, `mimir pack` treats all files as new and produces a patch containing everything. Instead, if the env has `seedPackBaseline: true` and `importPath` is set, `mimir pack` should automatically run baseline seeding first (same logic as post-import seed), then diff against it — so the first pack after a fresh import or manual manifest deletion still produces a minimal patch. Makes the workflow more forgiving without requiring the user to remember to run import first.
+
+### patch-index.json version collision on baseline reset
+
+If the pack baseline is reset (v0 reseeded) and then `mimir pack` is run again, the pack produces a new "version 1" zip — but `patch-index.json` may already have a version 1 entry from a previous pack run, resulting in duplicate version numbers in the index. Need to either:
+- Clear `patch-index.json` when reseeding baseline (implicit: reset = start over)
+- Or track the current version in the per-env manifest and advance from there regardless
+
+### Move pack manifest into environments/ dir
+
+`.mimir-pack-manifest-{envName}.json` in the project root is ugly and ad-hoc. Move to `environments/{envName}/pack-manifest.json` alongside the env config. This also makes `--reseed-baseline-only` a natural fit as `mimir env <name> reseed-baseline` (reseeds just that env's manifest), keeping all env operations under the `mimir env` command namespace.
+
+---
+
 ## Open Issues
 
 ### Zone.exe needs write access to SubAbStateClass.txt ✓ RESOLVED
