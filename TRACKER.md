@@ -521,6 +521,14 @@ Currently `mimir build` seeds the pack baseline from the actual build output dir
 
 Currently if no pack manifest exists, `mimir pack` treats all files as new and produces a patch containing everything. Instead, `mimir pack` should automatically seed the baseline from the current build output (same logic as `mimir build` post-build seeding), then diff against it — producing a 0-file patch on the first run. This makes the workflow forgiving: even if the manifest was deleted or never created, the user can just run `mimir pack` and it self-heals without needing to re-run `mimir build`.
 
+### Always create patch-index.json even when no changes to pack
+
+If no pack manifest exists or there are no changed files, `mimir pack` currently exits early without writing `patch-index.json`. The index file should always be created/updated on every pack run — even a no-change run — so that clients can always find a valid index to query. An empty/current index with no new patch entry is a valid and useful state.
+
+### Overrides must never be included in the pack baseline
+
+`mimir build` currently seeds the pack baseline from the full build output directory, which includes any files copied from the overrides folder. This means override files are "known" to the baseline and only show up in a patch if they subsequently change. Instead, the baseline should only cover files produced by the core build (tables + copyFile actions) — override files should always be excluded from baseline seeding so that the first patch after a build always delivers them to players. After that first delivery they diff normally like everything else.
+
 ### patch-index.json version collision on baseline reset
 
 If the pack baseline is reset (v0 reseeded) and then `mimir pack` is run again, the pack produces a new "version 1" zip — but `patch-index.json` may already have a version 1 entry from a previous pack run, resulting in duplicate version numbers in the index. Need to either:
