@@ -170,7 +170,7 @@ Implemented. Commands:
 
 Zone.exe starts cleanly on a fully Mimir-built server. All server-side blockers resolved:
 
-- **ItemInfo.shn / ItemInfoServer.shn** — ✅ row order fixed (TableMerger single-pass over target.Data)
+- **ItemInfo.shn / ItemInfoServer.shn** — ✅ row order fixed (TableMerger single-pass over target.Data); ✅ client-only row env bug fixed (copy action pre-tags + targetEnvName fallback in Merge)
 - **ChargedEffect.shn** — ✅ data-identical to source; `Same Handle[1738]` is a pre-existing duplicate in the original server files that Zone tolerates as a warning
 - **Field.txt** — ✅ fixed (EUC-KR encoding + INDEX vs STRING[N] round-trip)
 - **ActionViewInfo.shn** — ⚠️ built to `9Data/Shine/View/` instead of `9Data/Shine/`; Zone loads from the View path anyway. See P0e for proper duplicate-path handling.
