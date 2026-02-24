@@ -214,6 +214,43 @@ This is an ergonomics improvement — no behaviour change until it's implemented
 
 `start-process.ps1` Step 6 now deletes all log files from the previous run before waiting for new ones to appear, so each container restart shows only the current run's output. (Archiving to timestamped dirs deferred to backlog — deletion is sufficient for now.)
 
+### P1: GitHub Actions CI/CD
+
+On push to main: validate + build Mimir project → `mimir build --all` → `mimir pack patches --env client` → upload patch artifacts. Exit non-zero on validation failure so bad data never ships. Eventually auto-restart the Docker server on new build (requires a runner with Docker access or webhook).
+
+Milestones:
+* [ ] Dockerfile for `mimir` CLI (dotnet publish self-contained)
+* [ ] GitHub Actions workflow: build + test on every push/PR
+* [ ] On merge to main: mimir import check + build + pack → upload patch zips as artifacts
+* [ ] Exit non-zero propagated so CI fails on broken data
+
+### P2: Game Management REST API
+
+ASP.NET container on the same Docker Compose network as SQL Server. Exposes HTTP endpoints for server administration and player management. **Account creation is the most important endpoint.**
+
+Core endpoints (priority order):
+* [ ] `POST /accounts` — **create account** (username, password hash, email)
+* [ ] `GET /accounts/{id}` — account lookup
+* [ ] `GET /characters?accountId=` — list characters with level/class/map
+* [ ] `POST /auth/login` — validate credentials, return token
+* [ ] `GET /shop` — premium item shop listing
+* [ ] `POST /shop/purchase` — buy premium item (deduct currency, add to inventory)
+* [ ] `POST /accounts/{id}/currency` — add/deduct premium currency
+
+Deploy as a 13th container in docker-compose.yml, same SQL Server network, port 5000.
+
+### P3: KIND Kubernetes Setup
+
+Local multi-node Kubernetes cluster via KIND (Kubernetes in Docker) for testing deployment on k8s before going to production. Builds on the Docker Compose stack — same images, translated to k8s manifests.
+
+* [ ] KIND cluster config (1 control-plane + 2 workers)
+* [ ] Helm chart or raw manifests for all 12 game containers
+* [ ] SQL Server StatefulSet with PersistentVolume for databases
+* [ ] ConfigMap for ServerInfo / per-process config
+* [ ] NodePort or LoadBalancer for game ports (9010, 9013, 9016–9028)
+* [ ] Liveness probes tied to Windows service health
+* [ ] Namespace isolation per Mimir project (mirrors per-project Docker naming)
+
 ### ✅ P2: `mimir.bat` deploy forwarding + per-project containers — DONE
 
 `mimir deploy <script>` from inside any project dir walks up to find `mimir.json`, derives the project name from the directory name, and calls `deploy\<script>.bat <project-name>`.
@@ -226,6 +263,10 @@ mimir deploy update         → build + pack + snapshot + restart
 mimir deploy restart-game   → snapshot + restart (skip build)
 mimir deploy start/stop/logs/rebuild-game/rebuild-sql/reimport
 ```
+
+### ✅ P2 bug: Patcher triggered master for v0 clients — FIXED
+
+Master condition was `currentVersion < minIncrementalVersion`. With minVer=1 a fresh client (v0) incorrectly downloaded the full master instead of applying v1 normally. Fixed to `currentVersion < (minIncrementalVersion - 1)` — v0 with minVer=1 gives `0 < 0` → false → incrementals. repair.bat now writes -1 to `.mimir-version` so `-1 < 0` → master. Fixed in `deploy/player/patch.bat` and `Program.cs` template.
 
 ### P2: Incremental pruning + master patch fallback
 
