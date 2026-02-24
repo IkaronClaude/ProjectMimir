@@ -261,15 +261,32 @@ my-server2-zone, my-server2-worldmanager
 
 Compose project name set via `-p <projectName>` or `COMPOSE_PROJECT_NAME` env var, passed in by `mimir.bat` when forwarding deploy commands.
 
-### P2: Repair pack ("master patch")
+### P2: Incremental pruning + master patch fallback
 
-`mimir pack` currently only generates *incremental* patches (files changed since last pack). There's no way for a client with a broken or out-of-date install to reset to the current known-good state in one shot.
+Every `mimir pack` run produces **both** an incremental patch (files changed since last pack) and a **master patch** (full snapshot of all current build output, always at the newest version).
 
-Add a `mimir pack --repair` (or `mimir pack --full`) mode that produces a special patch zip containing **all current build output files** — not just the diff from the last state. The patch-index.json entry for this pack would be flagged so the patcher (patch.bat / patch.ps1) knows it's a full-repair pack and applies it unconditionally regardless of the client's current version.
+**Pruning heuristic**: after each pack, sum the file sizes of surviving incremental patches. Once that total exceeds the master patch size, delete the oldest incrementals until it fits. The master is always cheaper than downloading everything piecemeal from that point back.
 
-Use case: player hasn't patched in a long time, has manually modified files, or is starting from a stock client. One `patch.bat` run pulls the repair pack first, then any incremental patches on top.
+**Patcher behaviour**:
+- Client version ≥ oldest surviving incremental → apply incrementals, end up at newest version
+- Client version < oldest surviving incremental (too old), missing, or corrupted → apply master patch → immediately at newest version, **no incrementals needed afterward**
 
-The repair pack is also the fix for the "client not patched after reimport" issue: `reimport` should offer to auto-generate a repair pack so that existing connected players can resync in one step.
+The master always represents the current state, so it's a complete replacement — not a base to chain incrementals on top of. This also serves as a game repair tool (re-apply master to fix corrupted/manually-modified files) and fixes the "client not patched after reimport" problem.
+
+**patch-index.json shape** (proposed):
+```json
+{
+  "latestVersion": 42,
+  "masterPatch": { "file": "patch-master.zip", "sha256": "..." },
+  "minIncrementalVersion": 38,
+  "patches": [
+    { "version": 38, "file": "patch-v38.zip", "sha256": "..." },
+    { "version": 39, "file": "patch-v39.zip", "sha256": "..." }
+  ]
+}
+```
+
+`minIncrementalVersion` is the oldest surviving incremental. Clients below it use master.
 
 ### P2c: Port shift for simultaneous servers
 
