@@ -224,20 +224,204 @@ Milestones:
 * [ ] On merge to main: mimir import check + build + pack → upload patch zips as artifacts
 * [ ] Exit non-zero propagated so CI fails on broken data
 
-### P2: Game Management REST API
+### ✅ P2: Game Management REST API
 
-ASP.NET container on the same Docker Compose network as SQL Server. Exposes HTTP endpoints for server administration and player management. **Account creation is the most important endpoint.**
+ASP.NET Core container on the same Docker Compose network as SQL Server. `src/Mimir.Api/` — minimal API, .NET 10, JWT auth, BCrypt web credentials, two-credential design.
 
-Core endpoints (priority order):
-* [ ] `POST /accounts` — **create account** (username, password hash, email)
-* [ ] `GET /accounts/{id}` — account lookup
-* [ ] `GET /characters?accountId=` — list characters with level/class/map
-* [ ] `POST /auth/login` — validate credentials, return token
-* [ ] `GET /shop` — premium item shop listing
-* [ ] `POST /shop/purchase` — buy premium item (deduct currency, add to inventory)
-* [ ] `POST /accounts/{id}/currency` — add/deduct premium currency
+* [x] `POST /api/auth/login` — BCrypt verify -> JWT
+* [x] `POST /api/auth/set-ingame-password` — update MD5 game pw (JWT)
+* [x] `POST /api/accounts` — create account (BCrypt + MD5, transactional)
+* [x] `GET /api/accounts/me` — own account info (JWT)
+* [x] `GET /api/accounts/me/characters` — own character list (no nUserNo in response)
+* [x] `GET /api/accounts/me/cash` — own premium balance
+* [x] `POST /api/accounts/me/cash` / `POST /api/accounts/{id}/cash` — add cash (admin)
+* [x] `POST /api/accounts/me/inventory` / `POST /api/accounts/{id}/inventory` — give item (admin)
+* [x] `GET /api/shop` / `GET /api/shop/{goodsNo}` — public shop listing
+* [x] `GET /api/characters/{charNo}` — public character info (no nUserNo)
+* [x] `tWebCredential` table auto-created at startup
+* [x] Docker: `deploy/Dockerfile.api`, `deploy/api.bat`, api service in docker-compose.yml
 
-Deploy as a 13th container in docker-compose.yml, same SQL Server network, port 5000.
+**Schema notes:** `GiveItemAsync` targets `tAccountItem` (adjust to `tCashItem`/`tPremiumItem` as needed). `ShopService` targets `tMallGoods` (adjust if different). `usp_User_insert` params assumed `@userID, @userPW, @email`. Admin = `nAuthID = 9`.
+
+### P2: Custom Web App Deploy (`mimir deploy webapp`)
+
+Allow anyone to ship a web frontend (admin panel, player portal, etc.) alongside the game
+stack. The key value is the **deploy infrastructure** — the web app tech is pluggable.
+`Mimir.StaticServer` is an optional built-in convenience; users who want Next.js, Vite SSR,
+or anything else bring their own container.
+
+#### Design goals
+
+- **Infrastructure first**: `webapp.bat` + docker-compose service are the core. The container
+  image is a user-controlled variable, not a Mimir concern.
+- **`Mimir.StaticServer` is optional**: shipped as a zero-config default for pre-built static
+  output (e.g. a Vite SPA build). Not required. No YARP proxy, no complexity — just static
+  files + SPA fallback.
+- **Next.js preferred** for a real management UI: file-based routing, SSR, built-in API
+  proxying via `next.config.js` rewrites. No CORS needed because the Next.js server proxies
+  API calls over the Docker network (server-to-server), and the browser only ever talks to
+  the Next.js origin.
+- **Vite** (e.g. Vite + React/Vue) is the right choice for a lightweight static panel. Build
+  output goes in `webapp-dist/`, Mimir.StaticServer serves it, API calls need CORS (see below).
+
+#### Two runtime modes
+
+```
+Mode A — Static (Vite SPA output → Mimir.StaticServer)
+  Browser ──port 8080──> Mimir.StaticServer ──wwwroot──> HTML/JS/CSS
+  Browser ──port 5000──> Mimir.Api          (CORS required)
+
+Mode B — SSR/Server (Next.js or any custom server, user's own container)
+  Browser ──port 8080──> Next.js server     ──SSR pages──> HTML
+  Next.js  ──port 5000──> Mimir.Api          (Docker network, no CORS)
+  browser fetch('/api/...')  →  Next.js rewrites  →  http://api:5000/api/...
+```
+
+Mode B is the better long-term approach. Mode A is the quick-start path.
+
+#### `Mimir.StaticServer` (`src/Mimir.StaticServer/`)
+
+Minimal static file server. No proxy, no YARP. ~5 lines of code:
+
+```csharp
+// Program.cs
+var app = WebApplication.Create(args);
+app.UseDefaultFiles();
+app.UseStaticFiles();           // serves from wwwroot (volume-mounted)
+app.MapFallbackToFile("index.html");  // SPA client-side routing
+app.Run();
+```
+
+- Port: configurable via `ASPNETCORE_URLS`, defaults to `http://+:8080`
+- wwwroot: `C:/app/wwwroot` (volume-mounted from `<project>/webapp-dist/`)
+- No packages beyond the web SDK
+
+#### CORS on `Mimir.Api`
+
+For Mode A, the browser calls the API at port 5000 from a page served at port 8080 — a
+cross-origin request. Add a `CORS_ORIGINS` env var to Mimir.Api:
+
+```csharp
+var origins = builder.Configuration["CORS_ORIGINS"]?.Split(',') ?? [];
+if (origins.Length > 0)
+    builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod()));
+// ...
+if (origins.Length > 0) app.UseCors();
+```
+
+In docker-compose webapp service: `CORS_ORIGINS=http://localhost:8080` (or `*` for open dev).
+In the `api` service: `- CORS_ORIGINS=${CORS_ORIGINS:-}` (empty = CORS disabled by default).
+
+#### Pluggable build context in docker-compose
+
+The `webapp` service uses env vars for the build context and Dockerfile, so swapping in a
+Next.js container requires only `mimir deploy set` calls — no compose file edits:
+
+```yaml
+  webapp:
+    build:
+      context: ${WEBAPP_CONTEXT:-.}
+      dockerfile: ${WEBAPP_DOCKERFILE:-Dockerfile.webapp}
+    profiles: [webapp]
+    ports:
+      - "8080:8080"
+    environment:
+      - API_URL=http://api:5000
+    volumes:
+      - ../${PROJECT_NAME:-test-project}/webapp-dist:C:/app/wwwroot:ro
+    depends_on:
+      api:
+        condition: service_started
+```
+
+Defaults (`context: .`, `dockerfile: Dockerfile.webapp`) give Mimir.StaticServer behaviour.
+For Next.js: `mimir deploy set WEBAPP_CONTEXT=Z:\my-nextjs-app` and
+`mimir deploy set WEBAPP_DOCKERFILE=Dockerfile`. No volume mount needed (app is baked in).
+
+#### `deploy/Dockerfile.webapp` (default — Mimir.StaticServer)
+
+```dockerfile
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-windowsservercore-ltsc2022
+WORKDIR /app
+EXPOSE 8080
+COPY webapp-publish/ .
+ENV ASPNETCORE_URLS=http://+:8080
+ENTRYPOINT ["dotnet", "Mimir.StaticServer.dll"]
+# wwwroot is volume-mounted from <project>/webapp-dist/ at runtime.
+# To use Next.js or another server: replace this file and set WEBAPP_CONTEXT + WEBAPP_DOCKERFILE.
+```
+
+#### `deploy/webapp.bat <project> [source-dir]`
+
+```bat
+@echo off
+setlocal
+if "%~1"=="" ( echo ERROR: Project name required. & exit /b 1 )
+set "PROJECT=%~1"
+
+:: Optional: sync an external built output dir into the project's webapp-dist/
+if not "%~2"=="" (
+    echo Syncing webapp files from %~2 ...
+    if not exist "%~dp0..\%PROJECT%\webapp-dist" mkdir "%~dp0..\%PROJECT%\webapp-dist"
+    robocopy "%~2" "%~dp0..\%PROJECT%\webapp-dist" /MIR /NP
+    if %errorlevel% gtr 7 ( echo ERROR: robocopy failed. & exit /b 1 )
+)
+
+:: If WEBAPP_CONTEXT points to a user container, skip publishing StaticServer
+if /i "%WEBAPP_CONTEXT%"=="" (
+    dotnet publish "%~dp0..\src\Mimir.StaticServer" -c Release -o "%~dp0webapp-publish" --no-self-contained
+    if errorlevel 1 ( echo ERROR: dotnet publish failed. & exit /b 1 )
+)
+
+set COMPOSE_PROJECT_NAME=%PROJECT%
+set PROJECT_NAME=%PROJECT%
+set DOCKER_BUILDKIT=0
+docker compose -f "%~dp0docker-compose.yml" --profile webapp build webapp
+docker compose -f "%~dp0docker-compose.yml" --profile webapp up -d webapp
+```
+
+#### Next.js workflow (Mode B)
+
+```bat
+:: One-time setup: tell mimir where the Next.js project lives
+mimir deploy set WEBAPP_CONTEXT=Z:\my-nextjs-app
+mimir deploy set WEBAPP_DOCKERFILE=Dockerfile
+
+:: The Next.js project needs a Dockerfile that knows about ASPNETCORE_URLS / port 8080.
+:: next.config.js rewrites: /api/:path* -> http://api:5000/api/:path*
+
+:: Deploy (builds the Next.js image, starts container)
+mimir deploy webapp
+```
+
+Requires: `Dockerfile` in the Next.js project that exposes port 8080 and calls `npm start`.
+Windows container base: `node:20-windowsservercore-ltsc2022`.
+
+#### Vite SPA workflow (Mode A)
+
+```bat
+:: Build the app
+cd Z:\my-vite-app && npm run build      :: output to dist/
+
+:: Deploy (syncs dist/ to webapp-dist/, builds StaticServer image, starts container)
+mimir deploy webapp Z:\my-vite-app\dist
+
+:: Access at http://localhost:8080
+:: API calls from JS: fetch("http://localhost:5000/api/accounts/me", { headers: { Authorization: ... } })
+:: Requires CORS_ORIGINS set: mimir deploy set CORS_ORIGINS=http://localhost:8080
+```
+
+#### Checklist
+
+* [ ] `src/Mimir.StaticServer/Mimir.StaticServer.csproj` (web SDK, no extra packages)
+* [ ] `src/Mimir.StaticServer/Program.cs` (5 lines: UseDefaultFiles + UseStaticFiles + fallback)
+* [ ] `deploy/Dockerfile.webapp` (aspnet:10.0 base, copies webapp-publish/)
+* [ ] `deploy/webapp.bat` (optional sync, conditional publish, docker compose up)
+* [ ] `deploy/docker-compose.yml` — add `webapp` service with `WEBAPP_CONTEXT`/`WEBAPP_DOCKERFILE` vars
+* [ ] `src/Mimir.Api/Program.cs` — add opt-in `CORS_ORIGINS` support
+* [ ] `deploy/docker-compose.yml` — add `CORS_ORIGINS` passthrough to `api` service
+* [ ] `Mimir.sln` — add Mimir.StaticServer (GUID `{A1B2C3D4-000B-000B-000B-00000000000B}`)
+* [ ] `mimir.bat` — add `webapp` and `api` to the Available scripts list
 
 ### P3: KIND Kubernetes Setup
 
