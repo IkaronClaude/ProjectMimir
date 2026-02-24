@@ -173,7 +173,7 @@ Zone.exe starts cleanly on a fully Mimir-built server. All server-side blockers 
 - **ItemInfo.shn / ItemInfoServer.shn** — ✅ row order fixed (TableMerger single-pass over target.Data); ✅ client-only row env bug fixed (copy action pre-tags + targetEnvName fallback in Merge); ✅ duplicate join key bug fixed (sourceIndex now Queue-based FIFO — 17 Q_ items appearing twice in source no longer produce ghost server-only rows; built ItemInfo.shn now byte-identical to source)
 - **ChargedEffect.shn** — ✅ data-identical to source; `Same Handle[1738]` is a pre-existing duplicate in the original server files that Zone tolerates as a warning
 - **Field.txt** — ✅ fixed (EUC-KR encoding + INDEX vs STRING[N] round-trip)
-- **ActionViewInfo.shn** — ⚠️ built to `9Data/Shine/View/` instead of `9Data/Shine/`; Zone loads from the View path anyway. See P0e for proper duplicate-path handling.
+- **ActionViewInfo.shn** — ✅ fixed in P0e; both `9Data/Shine/ActionViewInfo.shn` and `9Data/Shine/View/ActionViewInfo.shn` now import and build correctly after re-running `init-template` + `import`.
 
 ### 🔥 P0f: Client "Illegally Manipulated" Hash Check Failure
 
@@ -197,20 +197,9 @@ Client rejects with "client has been illegally manipulated" even with an unpatch
 4. If original also fails → DB/client version mismatch, not a Mimir issue; find matching client version or update DB hash table
 5. If only Mimir fails → specific files Mimir rebuilds incorrectly; fix those files' roundtrip fidelity
 
-### 🔥 P0e: Same-Named SHN Files at Multiple Paths Not Handled
+### ✅ P0e: Same-Named SHN Files at Multiple Paths — FIXED (commit 3c2468c)
 
-Some SHN files exist at multiple paths with the same table name (e.g. `ActionViewInfo.shn` in both `9Data/Shine/` and `9Data/Shine/View/`). They may be identical duplicates or genuinely different tables.
-
-**Current behavior**: `ReadAllTables` uses `tables[tableName] = ...` so the last file enumerated wins. `EnumerateFiles(AllDirectories)` walks depth-first, so the deeper path (`View/`) always clobbers the shallower one (`Shine/`). The built file lands in the wrong location.
-
-**Required behavior**:
-- Detect when the same table name appears at multiple paths during import
-- Import each as a separate entry (keyed by path, not just table name) so both are tracked
-- Build each to its original relative path (both `Shine/ActionViewInfo.shn` and `Shine/View/ActionViewInfo.shn`)
-- If tables differ: they're genuinely separate and need separate JSON files
-- If tables are identical: still build to both paths (the duplicate may be load-order dependent)
-
-**Workaround**: Manually edit `sourceRelDir` in the affected table's JSON, or copy from originals.
+`ReadAllTables` now uses a two-pass approach: shallower copy keeps the original name (`ActionViewInfo`), deeper copy gets a prefix (`View.ActionViewInfo`). `TemplateGenerator` sets `outputName = "ActionViewInfo"` on the deeper copy's template action so the build produces the correct filename. Import uses the internal name for the JSON file path to prevent collisions. Both `Shine/ActionViewInfo.shn` and `Shine/View/ActionViewInfo.shn` now roundtrip correctly. Covered by `SyntheticMultiPathTests` (9 integration tests).
 
 ### 🔥 P0d: ItemDataBox load order issue (after fieldInfo)
 
