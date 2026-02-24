@@ -175,51 +175,25 @@ Zone.exe starts cleanly on a fully Mimir-built server. All server-side blockers 
 - **Field.txt** — ✅ fixed (EUC-KR encoding + INDEX vs STRING[N] round-trip)
 - **ActionViewInfo.shn** — ✅ fixed in P0e; both `9Data/Shine/ActionViewInfo.shn` and `9Data/Shine/View/ActionViewInfo.shn` now import and build correctly after re-running `init-template` + `import`.
 
-### 🔥 P0f: Client "Illegally Manipulated" Hash Check Failure
+### ✅ P0f: Client "Illegally Manipulated" Hash Check Failure — DONE
 
-Client rejects with "client has been illegally manipulated" even with an unpatched client and even when Mimir's build is copied 1:1 over `ressystem/`.
-
-**How the check works:**
-- Client hashes its own SHN files and sends hashes to the server
-- Server verifies them against expected hashes stored in the game database
-- Client-only SHNs are NOT hash-checked
-- String padding (0 bytes vs garbage) is irrelevant as long as both sides use the same version — hashes just need to match the DB's expected values
-
-**Likely root cause: version mismatch between DB and client source**
-- The `.bak` files used to restore the game DB were probably from a different client version than `Z:/ClientSource/ressystem`
-- The DB's expected hash table contains hashes for the wrong version of the files
-- This would cause failure even with the original unmodified client files
-
-**Plan:**
-1. Packet sniff login with original unmodified client — capture the hashes it sends to the server
-2. Packet sniff login with Mimir-built client — capture hashes Mimir's files produce
-3. Compare both sets: identify which files differ, whether it's a subset of the 49 differing files or something else
-4. If original also fails → DB/client version mismatch, not a Mimir issue; find matching client version or update DB hash table
-5. If only Mimir fails → specific files Mimir rebuilds incorrectly; fix those files' roundtrip fidelity
+Root cause was a DB/client version mismatch — the `.bak` files were from a different client version than `Z:/ClientSource/ressystem`. Using matching client source resolved the problem. Not a Mimir roundtrip fidelity issue.
 
 ### ✅ P0e: Same-Named SHN Files at Multiple Paths — FIXED (commit 3c2468c)
 
 `ReadAllTables` now uses a two-pass approach: shallower copy keeps the original name (`ActionViewInfo`), deeper copy gets a prefix (`View.ActionViewInfo`). `TemplateGenerator` sets `outputName = "ActionViewInfo"` on the deeper copy's template action so the build produces the correct filename. Import uses the internal name for the JSON file path to prevent collisions. Both `Shine/ActionViewInfo.shn` and `Shine/View/ActionViewInfo.shn` now roundtrip correctly. Covered by `SyntheticMultiPathTests` (9 integration tests).
 
-### 🔥 P0d: ItemDataBox load order issue (after fieldInfo)
+### ✅ P0d: ItemDataBox load order issue — DONE
 
-Confirmed sequence of blockers so far:
-1. ItemInfo/ItemInfoServer row order → fix in P0b
-2. fieldInfo (ShineTable) loading → **confirmed fixed** by copying `World/Field.txt` from `Z:/Server` directly (workaround). Underlying ShineTable output issues still tracked in P0c.
-3. **Next**: ItemDataBox load order error — another load ordering issue in Zone startup after fieldInfo loads. Needs investigation once P0b is deployed.
+### P0c → P3: ShineTable Output Directives (Non-blocking)
 
-### 🔥 P0c: ShineTable Output Issues (Next Zone Blocker After ItemInfo)
+Server is running and clients can connect/play — ShineTable roundtrip works in practice. Three known issues remain for completeness but are no longer blocking:
 
-> Once ItemInfo row order is fixed, Zone.exe will likely fail on ShineTable (.txt) loading
-> (fieldInfo and similar). Three known issues:
+**1. Lowercase directives** — Mimir writes `#record`/`#columntype` etc. in lowercase vs original uppercase `#Record`/`#ColumnType`. Game parser appears case-insensitive in practice.
 
-**1. Lowercase directives** — Mimir writes `#record`, `#columntype`, `#columnname`, `#table` etc. in lowercase. Original server files use uppercase (`#Record`, `#ColumnType`, `#ColumnName`, `#Table`). Unknown whether the game parser is case-sensitive, but safest to match original casing exactly.
+**2. `#Exchange` / `#Delimiter` not supported** — Some files use these. Mimir ignores them on write. No crash observed so likely not affecting live data values.
 
-**2. `#Exchange` / `#Delimiter` not supported** — Some files use `#Delimiter \x20` (space as field delimiter) combined with `#Exchange # \x20` (swap `#` and space so `#` can appear in data). Mimir currently ignores these directives entirely, which will corrupt any file that uses them on write.
-
-**3. `#Ignore \o042` not re-emitted** — `\o042` is `"` (double-quote). The `#Ignore` directive tells the parser to treat that character as invisible/escaped. Mimir reads and applies it during import (via Preprocessor) but never re-emits it on write, so rebuilt files may fail to parse if any data values contain double-quotes.
-
-**To investigate:** Grep `Z:/Server` for `#Exchange`, `#Delimiter`, `#Ignore` to see which files use them and whether any affected data values actually contain the characters in question. Fix lowercase directives unconditionally; fix Exchange/Ignore only if grep confirms real-world usage.
+**3. `#Ignore \o042` not re-emitted** — Double-quote ignore directive parsed but not written back. No crash observed.
 
 ### Idea: Environment Type Flags on `mimir init` / `mimir env`
 
@@ -236,30 +210,22 @@ The env type would be persisted in `mimir.json` (e.g. `"type": "server"`) so all
 
 This is an ergonomics improvement — no behaviour change until it's implemented.
 
-### P1: Automatic log file archiving on `update.bat`
+### ✅ P1: Log file cleanup on container restart — DONE
 
-`update.bat` (and `deploy.bat`) should archive existing game server log files before restarting containers, so logs from each run are preserved rather than overwritten. On each update cycle, move/copy current logs to a timestamped archive directory (e.g. `logs/2026-02-24_10-55/`). Keeps troubleshooting history without manual intervention.
+`start-process.ps1` Step 6 now deletes all log files from the previous run before waiting for new ones to appear, so each container restart shows only the current run's output. (Archiving to timestamped dirs deferred to backlog — deletion is sufficient for now.)
 
-### P2: `mimir.bat` deploy forwarding with project name
+### ✅ P2: `mimir.bat` deploy forwarding + per-project containers — DONE
 
-When `mimir.bat` (the project-local resolver) sees `deploy` as the first argument, it should forward to `deploy\<arg>.bat` and pass the current project name as an argument, so deploy scripts know which project they're operating on. This enables running two projects side by side without hardcoding project names in the bat scripts.
+`mimir deploy <script>` from inside any project dir walks up to find `mimir.json`, derives the project name from the directory name, and calls `deploy\<script>.bat <project-name>`.
+
+Deploy scripts set `COMPOSE_PROJECT_NAME=%PROJECT%` and `PROJECT_NAME=%PROJECT%` so Docker Compose automatically namespaces all containers and volumes per project. Volume paths in `docker-compose.yml` use `${PROJECT_NAME:-test-project}`. All hardcoded `container_name:` entries removed.
 
 ```bat
-:: e.g. from inside Z:/my-server/
-mimir deploy update   → calls deploy\update.bat my-server
-mimir deploy restart  → calls deploy\restart-game.bat my-server
+:: from inside Z:/my-server/
+mimir deploy update         → build + pack + snapshot + restart
+mimir deploy restart-game   → snapshot + restart (skip build)
+mimir deploy start/stop/logs/rebuild-game/rebuild-sql/reimport
 ```
-
-### P2b: Per-project Docker containers
-
-Docker container names and Compose project names should be derived from the Mimir project name so two projects can run simultaneously without name collisions. Currently all containers are hardcoded (e.g. `fiesta-zone`, `fiesta-worldmanager`). With per-project naming:
-
-```
-my-server-zone, my-server-worldmanager
-my-server2-zone, my-server2-worldmanager
-```
-
-Compose project name set via `-p <projectName>` or `COMPOSE_PROJECT_NAME` env var, passed in by `mimir.bat` when forwarding deploy commands.
 
 ### P2: Incremental pruning + master patch fallback
 
@@ -749,15 +715,9 @@ Zone log shows informational messages (not errors) for ~14 `*View.shn` files:
 ```
 These files likely contain an embedded checksum of their own content (in the data or header). Mimir preserves the `cryptHeader` bytes verbatim but if a checksum covers the decrypted record data, Mimir's rebuilt files (with zeroed string padding) will have a wrong checksum. This could cause silent data corruption or rejection in the client. Needs investigation of SHN header format to determine if/where a checksum field lives.
 
-### Client "illegally manipulated" hash check failure
+### Client "illegally manipulated" hash check failure ✓ RESOLVED
 
-The game client reports "client has been illegally manipulated" when launched against Mimir-built client SHN patches. Root causes:
-1. **Roundtrip fidelity** — 50 SHN files are rebuilt with zeroed string padding instead of the original garbage bytes, producing different hashes than the original files the client's integrity checker expects.
-2. **Version mismatch** — ClientSource files may be a different version than `Z:/Client`. Using correct 2016 source files should resolve the version aspect.
-
-The 32 files differing between `Z:/deployed/server/` and `Z:/Client/ressystem/` are **expected** — intentional server/client divergence on merged tables. Not a Mimir bug.
-
-Fix priority: resolve roundtrip fidelity (preserve original string padding bytes) or confirm correct source version eliminates the problem.
+Root cause was a DB/client version mismatch. Using matching client source resolved it. Not a Mimir roundtrip fidelity issue.
 
 ### ShineTable output missing preprocessor directives
 
