@@ -261,6 +261,16 @@ my-server2-zone, my-server2-worldmanager
 
 Compose project name set via `-p <projectName>` or `COMPOSE_PROJECT_NAME` env var, passed in by `mimir.bat` when forwarding deploy commands.
 
+### P2: Repair pack ("master patch")
+
+`mimir pack` currently only generates *incremental* patches (files changed since last pack). There's no way for a client with a broken or out-of-date install to reset to the current known-good state in one shot.
+
+Add a `mimir pack --repair` (or `mimir pack --full`) mode that produces a special patch zip containing **all current build output files** — not just the diff from the last state. The patch-index.json entry for this pack would be flagged so the patcher (patch.bat / patch.ps1) knows it's a full-repair pack and applies it unconditionally regardless of the client's current version.
+
+Use case: player hasn't patched in a long time, has manually modified files, or is starting from a stock client. One `patch.bat` run pulls the repair pack first, then any incremental patches on top.
+
+The repair pack is also the fix for the "client not patched after reimport" issue: `reimport` should offer to auto-generate a repair pack so that existing connected players can resync in one step.
+
 ### P2c: Port shift for simultaneous servers
 
 Add a `portShift` value to `mimir.json` (or `deploy/` config) that offsets all game server ports by a fixed amount. First server uses base ports (9010 etc.), second server shifts by 100 (9110), third by 200, etc.
