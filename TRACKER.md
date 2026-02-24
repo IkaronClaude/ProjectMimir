@@ -251,6 +251,19 @@ Local multi-node Kubernetes cluster via KIND (Kubernetes in Docker) for testing 
 * [ ] Liveness probes tied to Windows service health
 * [ ] Namespace isolation per Mimir project (mirrors per-project Docker naming)
 
+### ✅ P1: Per-project deploy config (`mimir deploy set`) — DONE
+
+`mimir deploy set KEY=VALUE` writes a key=value pair to `<project>/.mimir-deploy.env`. `mimir.bat` automatically loads this file into the environment before calling any deploy script, so variables like `SA_PASSWORD` are available to Docker Compose without being hardcoded in the compose file.
+
+```bat
+:: Set a custom SQL Server password for this project
+mimir deploy set SA_PASSWORD=MyStrongPassword1
+:: All subsequent deploys use it automatically
+mimir deploy start
+```
+
+`SA_PASSWORD` in `docker-compose.yml` is now `${SA_PASSWORD:-V63WsdafLJT9NDAn}` (default preserved for zero-config setup). The `.mimir-deploy.env` file should be gitignored (contains secrets).
+
 ### ✅ P2: `mimir.bat` deploy forwarding + per-project containers — DONE
 
 `mimir deploy <script>` from inside any project dir walks up to find `mimir.json`, derives the project name from the directory name, and calls `deploy\<script>.bat <project-name>`.
