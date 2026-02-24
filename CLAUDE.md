@@ -21,7 +21,7 @@
 
 ## Data Locations
 
-- **Server**: `Z:/Server/` (~218 SHN + hundreds of .txt) — import path for `server` environment
+- **Server**: `Z:/Server/` (~218 SHN + hundreds of .txt) — import path for `server` environment. **Do NOT use as ground truth** — may become contaminated by manual copies. `Z:/ServerSource/` is the clean unmodified server backup (ground truth).
 - **Client**: `Z:/ClientSource/ressystem` — import path for `client` environment (unmodified original SHN files, ground truth). `Z:/Client/` is the already-patched game client — do NOT use as import source.
 - **Overlap**: 118 shared SHN files, 102 server-only, 39 client-only
 - Client-only files are mostly UI/text/visual (BasicInfo*, TextData*, FontSet, DamageEffect, etc.)
