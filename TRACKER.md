@@ -247,7 +247,11 @@ The env type would be persisted in `mimir.json` (e.g. `"type": "server"`) so all
 
 This is an ergonomics improvement — no behaviour change until it's implemented.
 
-### P1: `mimir.bat` deploy forwarding with project name
+### P1: Automatic log file archiving on `update.bat`
+
+`update.bat` (and `deploy.bat`) should archive existing game server log files before restarting containers, so logs from each run are preserved rather than overwritten. On each update cycle, move/copy current logs to a timestamped archive directory (e.g. `logs/2026-02-24_10-55/`). Keeps troubleshooting history without manual intervention.
+
+### P2: `mimir.bat` deploy forwarding with project name
 
 When `mimir.bat` (the project-local resolver) sees `deploy` as the first argument, it should forward to `deploy\<arg>.bat` and pass the current project name as an argument, so deploy scripts know which project they're operating on. This enables running two projects side by side without hardcoding project names in the bat scripts.
 
@@ -257,7 +261,7 @@ mimir deploy update   → calls deploy\update.bat my-server
 mimir deploy restart  → calls deploy\restart-game.bat my-server
 ```
 
-### P1b: Per-project Docker containers
+### P2b: Per-project Docker containers
 
 Docker container names and Compose project names should be derived from the Mimir project name so two projects can run simultaneously without name collisions. Currently all containers are hardcoded (e.g. `fiesta-zone`, `fiesta-worldmanager`). With per-project naming:
 
@@ -268,7 +272,7 @@ my-server2-zone, my-server2-worldmanager
 
 Compose project name set via `-p <projectName>` or `COMPOSE_PROJECT_NAME` env var, passed in by `mimir.bat` when forwarding deploy commands.
 
-### P1c: Port shift for simultaneous servers
+### P2c: Port shift for simultaneous servers
 
 Add a `portShift` value to `mimir.json` (or `deploy/` config) that offsets all game server ports by a fixed amount. First server uses base ports (9010 etc.), second server shifts by 100 (9110), third by 200, etc.
 
