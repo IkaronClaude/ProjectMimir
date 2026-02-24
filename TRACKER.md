@@ -170,7 +170,7 @@ Implemented. Commands:
 
 Zone.exe starts cleanly on a fully Mimir-built server. All server-side blockers resolved:
 
-- **ItemInfo.shn / ItemInfoServer.shn** — ✅ row order fixed (TableMerger single-pass over target.Data); ✅ client-only row env bug fixed (copy action pre-tags + targetEnvName fallback in Merge)
+- **ItemInfo.shn / ItemInfoServer.shn** — ✅ row order fixed (TableMerger single-pass over target.Data); ✅ client-only row env bug fixed (copy action pre-tags + targetEnvName fallback in Merge); ✅ duplicate join key bug fixed (sourceIndex now Queue-based FIFO — 17 Q_ items appearing twice in source no longer produce ghost server-only rows; built ItemInfo.shn now byte-identical to source)
 - **ChargedEffect.shn** — ✅ data-identical to source; `Same Handle[1738]` is a pre-existing duplicate in the original server files that Zone tolerates as a warning
 - **Field.txt** — ✅ fixed (EUC-KR encoding + INDEX vs STRING[N] round-trip)
 - **ActionViewInfo.shn** — ⚠️ built to `9Data/Shine/View/` instead of `9Data/Shine/`; Zone loads from the View path anyway. See P0e for proper duplicate-path handling.
@@ -231,6 +231,48 @@ Confirmed sequence of blockers so far:
 **3. `#Ignore \o042` not re-emitted** — `\o042` is `"` (double-quote). The `#Ignore` directive tells the parser to treat that character as invisible/escaped. Mimir reads and applies it during import (via Preprocessor) but never re-emits it on write, so rebuilt files may fail to parse if any data values contain double-quotes.
 
 **To investigate:** Grep `Z:/Server` for `#Exchange`, `#Delimiter`, `#Ignore` to see which files use them and whether any affected data values actually contain the characters in question. Fix lowercase directives unconditionally; fix Exchange/Ignore only if grep confirms real-world usage.
+
+### Idea: Environment Type Flags on `mimir init` / `mimir env`
+
+Instead of remembering multiple orthogonal switches (`--passthrough server`, `--patchable client`, etc.), expose env-type presets at environment registration time:
+
+```bat
+mimir init my-server --env server=Z:/Server --server server --env client=Z:/Client/ressystem --client client
+```
+
+- `--server <envName>` — tags that env as type "server": auto-enables `--passthrough` on `init-template`, no patchable
+- `--client <envName>` — tags that env as type "client": auto-enables patchable/pack baseline seeding, no passthrough
+
+The env type would be persisted in `mimir.json` (e.g. `"type": "server"`) so all downstream commands (`init-template`, `build`, `pack`) infer correct behaviour without per-command flags.
+
+This is an ergonomics improvement — no behaviour change until it's implemented.
+
+### P1: `mimir.bat` deploy forwarding with project name
+
+When `mimir.bat` (the project-local resolver) sees `deploy` as the first argument, it should forward to `deploy\<arg>.bat` and pass the current project name as an argument, so deploy scripts know which project they're operating on. This enables running two projects side by side without hardcoding project names in the bat scripts.
+
+```bat
+:: e.g. from inside Z:/my-server/
+mimir deploy update   → calls deploy\update.bat my-server
+mimir deploy restart  → calls deploy\restart-game.bat my-server
+```
+
+### P1b: Per-project Docker containers
+
+Docker container names and Compose project names should be derived from the Mimir project name so two projects can run simultaneously without name collisions. Currently all containers are hardcoded (e.g. `fiesta-zone`, `fiesta-worldmanager`). With per-project naming:
+
+```
+my-server-zone, my-server-worldmanager
+my-server2-zone, my-server2-worldmanager
+```
+
+Compose project name set via `-p <projectName>` or `COMPOSE_PROJECT_NAME` env var, passed in by `mimir.bat` when forwarding deploy commands.
+
+### P1c: Port shift for simultaneous servers
+
+Add a `portShift` value to `mimir.json` (or `deploy/` config) that offsets all game server ports by a fixed amount. First server uses base ports (9010 etc.), second server shifts by 100 (9110), third by 200, etc.
+
+Port shift applies to all game process ports defined in the Docker Compose / server config templates at project init time. Each project gets a unique non-overlapping port range so two full server stacks can run on the same host.
 
 ### P1: Text Table String Length Bug
 
