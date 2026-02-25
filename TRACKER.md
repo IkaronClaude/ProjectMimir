@@ -195,20 +195,27 @@ Server is running and clients can connect/play — ShineTable roundtrip works in
 
 **3. `#Ignore \o042` not re-emitted** — Double-quote ignore directive parsed but not written back. No crash observed.
 
-### Idea: Environment Type Flags on `mimir init` / `mimir env`
+### P2: Environment Type Flags on `mimir env init`
 
-Instead of remembering multiple orthogonal switches (`--passthrough server`, `--patchable client`, etc.), expose env-type presets at environment registration time:
+Instead of remembering multiple orthogonal switches (`--passthrough server`, `--patchable client`, etc.), declare the env type once at registration time:
 
 ```bat
-mimir init my-server --env server=Z:/Server --server server --env client=Z:/Client/ressystem --client client
+mimir env init server Z:/Server --type server
+mimir env init client Z:/ClientSource/ressystem --type client
 ```
 
-- `--server <envName>` — tags that env as type "server": auto-enables `--passthrough` on `init-template`, no patchable
-- `--client <envName>` — tags that env as type "client": auto-enables patchable/pack baseline seeding, no passthrough
+- `--type server` — auto-enables `--passthrough` on `init-template`, disables patchable
+- `--type client` — auto-enables patchable/pack baseline seeding, disables passthrough
 
-The env type would be persisted in `mimir.json` (e.g. `"type": "server"`) so all downstream commands (`init-template`, `build`, `pack`) infer correct behaviour without per-command flags.
+Type is persisted in `mimir.json` per env (e.g. `"type": "server"`) so all downstream commands (`init-template`, `build`, `pack`) infer correct behaviour without per-command flags.
 
-This is an ergonomics improvement — no behaviour change until it's implemented.
+* [x] Add `--type server|client` to `mimir env init`
+* [x] `--type server`: deploy-path = provided path, import-path = provided path + `/9Data`
+* [x] `--type client`: seed-pack-baseline = true (same as --patchable)
+* [ ] Persist type in `mimir.json` environments entry (currently inferred from deploy-path presence)
+* [ ] `init-template` reads type → applies passthrough automatically if server
+* [ ] `build` reads type → applies patchable/pack baseline logic automatically if client
+* [ ] `pack` reads type → errors clearly if env is not type client
 
 ### ✅ P1: Log file cleanup on container restart — DONE
 
@@ -242,6 +249,25 @@ ASP.NET Core container on the same Docker Compose network as SQL Server. `src/Mi
 * [x] Docker: `deploy/Dockerfile.api`, `deploy/api.bat`, api service in docker-compose.yml
 
 **Schema notes:** `GiveItemAsync` targets `tAccountItem` (adjust to `tCashItem`/`tPremiumItem` as needed). `ShopService` targets `tMallGoods` (adjust if different). `usp_User_insert` params assumed `@userID, @userPW, @email`. Admin = `nAuthID = 9`.
+
+### P2: Split `mimir` CLI into focused sub-projects
+
+As the CLI grows, split `Mimir.Cli` into separate dotnet tool projects by domain so each is small, focused, and independently documentable/discoverable:
+
+- `Mimir.Env` (`mimir env`) — environment management (init, set, list, reseed-baseline)
+- `Mimir.Sql` (`mimir sql`) — query/edit/shell (query, edit, shell, validate)
+- `Mimir.Data` (`mimir data`) — data pipeline (import, build, init-template, edit-template, analyze-types)
+- `Mimir.Deploy` (`mimir deploy`) — Docker deployment lifecycle (start, stop, update, restart, rebuild-*, set)
+- `Mimir.Patch` (`mimir patch`) — pack/patch index management (pack, shn inspection)
+
+Each project is a standalone dotnet global tool. `mimir.bat` in project directories dispatches to the appropriate sub-tool. Composable via scripts; keeps the monolith from growing unbounded.
+
+* [ ] Define sub-project split boundaries (which commands go where)
+* [ ] Create solution structure: one csproj per sub-tool, shared `Mimir.Cli.Common` for DI/project resolution
+* [ ] Migrate commands from `Mimir.Cli` into the appropriate sub-project
+* [ ] Update `mimir.bat` dispatcher to route `mimir env ...` → `mimir-env.exe ...` etc.
+* [ ] Publish all sub-tools as dotnet global tools (or a single `mimir` meta-tool that delegates)
+* [ ] Update `mimir init` to scaffold the updated `mimir.bat` pointing to sub-tools
 
 ### P2: Custom Web App Deploy (`mimir deploy webapp`)
 
@@ -423,6 +449,46 @@ mimir deploy webapp Z:\my-vite-app\dist
 * [ ] `Mimir.sln` — add Mimir.StaticServer (GUID `{A1B2C3D4-000B-000B-000B-00000000000B}`)
 * [ ] `mimir.bat` — add `webapp` and `api` to the Available scripts list
 
+### P3: Extract Patch System into Standalone Library (`Patcher`)
+
+The patch pack/apply logic is currently embedded in `Mimir.Cli`. Extract it into a reusable
+C# library (potentially its own repo/solution) so that anyone rolling their own patcher
+— visual GUI, custom client launcher, etc. — can just import the library rather than
+depending on Mimir.
+
+#### Proposed package split
+
+```
+Patcher/                        ← own repo/solution
+  Patcher.Core/                 — shared models: PatchIndex, PatchEntry, VersionFile, SHA-256 helpers
+  Patcher.Server/               — server-side: pack zips, build/update patch-index.json, prune old patches
+  Patcher.Client/               — client-side: fetch index, compare version, download + verify + extract
+  Patcher.ClientCLI/            — thin CLI wrapper around Patcher.Client
+                                   dotnet run Patcher.ClientCLI -- --server http://127.0.0.1:8080 --repair
+```
+
+`Mimir.Cli` pack command becomes a thin wrapper:
+```csharp
+// mimir pack --env client
+var packer = new Patcher.Server.PatchPacker(buildOutputDir, patchesDir);
+await packer.PackAsync(baseManifest, patchIndexPath);
+```
+
+`Patcher.ClientCLI` is a standalone dotnet tool players can run directly — no Mimir dependency.
+Third parties import `Patcher.Client` to build a visual launcher (WPF, Avalonia, WinForms, etc.)
+and call `PatchClient.CheckForUpdatesAsync()` / `PatchClient.ApplyAsync()` directly.
+
+#### Checklist
+
+* [ ] Define `Patcher.Core` models (PatchIndex, PatchEntry, VersionFile) extracted from current Mimir code
+* [ ] `Patcher.Server` — PatchPacker: build index, zip changed files, prune incrementals vs master
+* [ ] `Patcher.Client` — PatchClient: fetch index, version compare, download + SHA-256 verify + extract
+* [ ] `Patcher.ClientCLI` — `--server <url>`, `--repair`, `--version`, progress output to stdout
+* [ ] `Mimir.Cli` pack command delegates to `Patcher.Server` NuGet package (or project reference)
+* [ ] Decide: same repo/solution as Mimir, or separate `ProjectMimir.Patcher` repo
+* [ ] Publish `Patcher.Client` and `Patcher.Server` as NuGet packages
+* [ ] Publish `Patcher.ClientCLI` as a dotnet global tool
+
 ### P3: KIND Kubernetes Setup
 
 Local multi-node Kubernetes cluster via KIND (Kubernetes in Docker) for testing deployment on k8s before going to production. Builds on the Docker Compose stack — same images, translated to k8s manifests.
@@ -465,32 +531,9 @@ mimir deploy start/stop/logs/rebuild-game/rebuild-sql/reimport
 
 Master condition was `currentVersion < minIncrementalVersion`. With minVer=1 a fresh client (v0) incorrectly downloaded the full master instead of applying v1 normally. Fixed to `currentVersion < (minIncrementalVersion - 1)` — v0 with minVer=1 gives `0 < 0` → false → incrementals. repair.bat now writes -1 to `.mimir-version` so `-1 < 0` → master. Fixed in `deploy/player/patch.bat` and `Program.cs` template.
 
-### P2: Incremental pruning + master patch fallback
+### ✅ P2: Incremental pruning + master patch fallback — DONE
 
-Every `mimir pack` run produces **both** an incremental patch (files changed since last pack) and a **master patch** (full snapshot of all current build output, always at the newest version).
-
-**Pruning heuristic**: after each pack, sum the file sizes of surviving incremental patches. Once that total exceeds the master patch size, delete the oldest incrementals until it fits. The master is always cheaper than downloading everything piecemeal from that point back.
-
-**Patcher behaviour**:
-- Client version ≥ oldest surviving incremental → apply incrementals, end up at newest version
-- Client version < oldest surviving incremental (too old), missing, or corrupted → apply master patch → immediately at newest version, **no incrementals needed afterward**
-
-The master always represents the current state, so it's a complete replacement — not a base to chain incrementals on top of. This also serves as a game repair tool (re-apply master to fix corrupted/manually-modified files) and fixes the "client not patched after reimport" problem.
-
-**patch-index.json shape** (proposed):
-```json
-{
-  "latestVersion": 42,
-  "masterPatch": { "file": "patch-master.zip", "sha256": "..." },
-  "minIncrementalVersion": 38,
-  "patches": [
-    { "version": 38, "file": "patch-v38.zip", "sha256": "..." },
-    { "version": 39, "file": "patch-v39.zip", "sha256": "..." }
-  ]
-}
-```
-
-`minIncrementalVersion` is the oldest surviving incremental. Clients below it use master.
+Every `mimir pack` run produces both an incremental patch and a full master snapshot. Pruning removes oldest incrementals once their total size exceeds the master. Patcher falls back to master for clients too old for incrementals or with a corrupted/missing version file. patch-index.json shape: `latestVersion`, `masterPatch`, `minIncrementalVersion`, `patches[]`.
 
 ### P2c: Port shift for simultaneous servers
 
@@ -655,12 +698,6 @@ Quick `mimir shn` subcommands for inspecting raw SHN files without importing the
 - `mimir shn <file> --decrypt-to <outfile>` — write decrypted raw bytes for hex analysis
 
 Especially useful for diagnosing row order mismatches, schema differences, and roundtrip fidelity issues without needing a full project import.
-
-## Sub-Projects / Future Projects
-
-### Game Management API (separate project)
-
-A Docker container exposing an HTTP API over the game databases — account creation, character queries, GM tools, server status, etc. Would form the backend for a web panel or admin UI. Likely a separate repo/project rather than part of Mimir itself, but would depend on the same Docker Compose network and SQL Server setup. Worth building once the server deployment is stable and the database schema is well understood.
 
 ---
 
@@ -843,11 +880,24 @@ Composable CLI commands for common multi-step operations:
 
 ## Backlog
 
-### Server build path should target 9Data directly
+### Server build path should target 9Data directly ✓ DONE
 
-Currently the server env `buildPath` is set to `build/server/`, so build output lands at `build/server/9Data/Shine/ItemInfo.shn`. The `buildPath` should be the 9Data dir itself — `build/server/9Data` — so that files land flat in the right place without the extra `9Data` prefix in the path. Requires updating default in `mimir env server init` and adjusting any snapshot/robocopy commands that reference the old layout.
+**Convention:** `build/server/` IS the 9Data directory. Set `importPath = Z:/Server/9Data` so
+sourceRelDir is `Shine/` etc. (not `9Data/Shine/`), and build output lands at
+`build/server/Shine/ItemInfo.shn` directly — no `9Data/` subdirectory inside `build/server/`.
 
-Related: a separate **deploy path** is needed for server-side non-data files (exes, DBs, scripts, GamigoZR, etc.) that live one directory above 9Data. The deploy path env config would let `mimir deploy` (or `update.bat`) copy binaries + config files from the deploy path alongside the built 9Data snapshot. This cleanly separates "data Mimir owns" from "binaries Mimir doesn't touch".
+- `deploy/docker-compose.yml` volume changed: `deployed/server/9Data:C:/server/9Data`
+  → `deployed/server:C:/server/9Data` — the whole `deployed/server/` is mounted as 9Data.
+- Deploy scripts robocopy `build\server` → `deployed\server` (unchanged); since `importPath`
+  now points at `Z:/Server/9Data`, only game data files are ever imported — no server-root
+  exes or scripts can end up in the build output.
+- `deployPath` env property added (`mimir env server set deploy-path Z:/Server`) to record
+  where server binaries (exes, DLLs, GamigoZR, etc.) live separately from `buildPath`.
+  Deploy scripts don't yet act on it — wires up with standalone project / P4 feature.
+
+Remaining: `buildPath` default on `mimir env init` is still `build/{envName}`. Changing it
+to be type-aware (`build/{envName}` = 9Data for server, `build/{envName}` = ressystem for
+client) is part of P2 Environment Type Flags.
 
 ### Auto-archive old log files on container restart
 
@@ -863,24 +913,19 @@ Currently `deploy.bat`, `update.bat`, etc. live in `deploy/` and must be run fro
 
 Similarly, `mimir init` should scaffold a `mimir.bat` in the new project directory that forwards all commands to the mimir executable used to run `init` — so `mimir.bat build`, `mimir.bat import`, etc. work from the project root without needing to know the install path. The init command already writes a basic `mimir.bat`, but it should capture the actual invocation path (e.g. `dotnet run --project ...` or the installed exe path) rather than assuming `mimir` is in PATH.
 
-### deploy.bat wipes SQL database unconditionally
+### deploy.bat wipes SQL database unconditionally ✓ FIXED
 
-`deploy.bat` currently calls `rebuild-sql.bat` which wipes and restores all game databases from `.bak` files, destroying any runtime state (character data, account data, etc.). This is only appropriate for a first-time setup or an intentional reset — not for a routine full deploy. `deploy.bat` should check whether the SQL container/databases already exist and skip the SQL rebuild if so, or split into separate `deploy-first-time.bat` vs `deploy.bat` scripts with clearly different semantics.
+`deploy.bat` never called `rebuild-sql.bat` (tracker entry was stale). `setup-sql.ps1` already
+skipped restoring databases that exist in the volume. Fixed the remaining risk:
+- Existence check improved: now uses `SET NOCOUNT ON; SELECT COUNT(*) FROM sys.databases WHERE name = N'$db'`
+  and matches on the numeric result, not string content — resistant to error text false matches.
+- Removed `WITH REPLACE` from both restore paths (`WITH REPLACE` would silently overwrite a live
+  database if the existence check ever false-negatives; without it, SQL Server refuses to restore
+  over an existing database, making any bug in the check a safe, visible error instead).
 
 ### SQL password management
 
 No good way to set/change the SQL Server password used by the game server and Docker setup. Currently hardcoded in deploy scripts and `ServerInfo.txt`. Need a proper mechanism — e.g. `mimir env server set sql-password <pw>` or a dedicated secrets file — so the password can be configured per-project without editing raw config files.
-
-### Split `mimir` CLI into focused sub-tools
-
-As the CLI grows, consider splitting into separate executables by domain:
-- `mimir env` — environment management
-- `mimir sql` — query/edit/shell
-- `mimir build` / `mimir import` — data pipeline
-- `mimir deploy` — Docker deployment lifecycle
-- `mimir patch` — pack/patch index management
-
-Each could be a standalone dotnet tool, composable via scripts. Keeps each tool small and focused, easier to document and discover. Low priority — only worth doing once the feature set is stable.
 
 ### Reimport to dummy dir for more accurate baseline seeding
 
@@ -973,29 +1018,9 @@ These are parsed and applied during import (handled by `Preprocessor`) but never
 - Determine if any data values in those files contain the affected characters (e.g. `\o042` = `"` double-quote)
 - If character-mangling directives are present: either re-emit them on write, or ensure Mimir has already applied them to the stored values (so the raw data no longer needs them)
 
-### ItemInfo/ItemInfoServer row order mismatch ⚠️ BLOCKING ZONE
+### ItemInfo/ItemInfoServer row order mismatch ✓ RESOLVED
 
-Zone.exe currently fails to start with:
-```
-ItemDataBox::idb_Load : iteminfo iteminfoserver Order not match[3228]
-```
-`[3228]` is likely a **row number**, not a column index. The game engine requires ItemInfo.shn and ItemInfoServer.shn to have matching rows at the same row numbers — i.e. the row for item ID X must be at the same position in both files. Mimir correlates rows by key columns (correct relational approach), but the built files may reorder rows relative to the originals, breaking the engine's assumption.
-
-**To verify**: Decrypt and compare built `build/server/9Data/Shine/ItemInfo.shn` and `ItemInfoServer.shn` row order against the originals in `Z:/Server/9Data/Shine/`. If row order differs, the fix is to preserve original row order during build (sort by original row index, not by key).
-
-Fallback: user can supply a known-good server release for cross-reference if needed.
-
-The game loads `ItemInfo.shn` and `ItemInfoServer.shn` and cross-validates their column order. `[180]` is the column index where they diverge. This suggests that after merge+split, the column ordering in one or both files differs from the originals.
-
-**Likely cause:** `TableSplitter.Split` rebuilds columns from the merged schema, which may reorder or drop env-specific columns. Column 180 in ItemInfo/ItemInfoServer is where the split columns (server-only vs client-only) begin diverging from the merged schema.
-
-**To investigate:**
-- Compare column order of `Z:/Server/9Data/Shine/ItemInfo.shn` vs Mimir's `build/server/9Data/Shine/ItemInfo.shn` (column 180+)
-- Same for `ItemInfoServer.shn`
-- Check whether `TableSplitter` preserves original column order per env (from `EnvMergeMetadata.ColumnOrder`)
-- Check whether the `conflictStrategy: "split"` columns are being output in the right order
-
-**Note:** MobChat error in same log is from a prior session before the `#RecordIn` fix was deployed.
+See P0b above. Row order fixed (TableMerger single-pass), duplicate join key fixed (Queue-based FIFO), built ItemInfo.shn now byte-identical to source. Zone.exe starts cleanly.
 
 ### Zone.exe crash — GamigoZR dependency ✓ RESOLVED
 
