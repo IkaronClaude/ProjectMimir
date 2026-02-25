@@ -535,6 +535,14 @@ Master condition was `currentVersion < minIncrementalVersion`. With minVer=1 a f
 
 Every `mimir pack` run produces both an incremental patch and a full master snapshot. Pruning removes oldest incrementals once their total size exceeds the master. Patcher falls back to master for clients too old for incrementals or with a corrupted/missing version file. patch-index.json shape: `latestVersion`, `masterPatch`, `minIncrementalVersion`, `patches[]`.
 
+### P2: Deploy env vars should take effect on restart, not rebuild
+
+Currently changing a deploy env var (e.g. `KEEP_ALIVE`, `SA_PASSWORD`) requires `rebuild-game` to recreate containers with fresh env. Investigate whether `docker compose up -d --force-recreate` (without a full image rebuild) would suffice — this would be much faster than a full rebuild. If so, a dedicated `mimir deploy apply-config` or just updated `restart-game` behaviour could recreate containers in place without re-baking the image.
+
+* [ ] Confirm `up --force-recreate` picks up env changes without rebuilding the image
+* [ ] If yes: update `restart-game` (or add `apply-config`) to use `--force-recreate` for env-only changes
+* [ ] Document which changes require rebuild (image changes: Dockerfile, scripts, binaries) vs. restart (env vars only)
+
 ### P2c: Port shift for simultaneous servers
 
 Add a `portShift` value to `mimir.json` (or `deploy/` config) that offsets all game server ports by a fixed amount. First server uses base ports (9010 etc.), second server shifts by 100 (9110), third by 200, etc.
