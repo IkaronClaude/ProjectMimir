@@ -157,6 +157,20 @@ Directory structure mirrors the source 9Data layout.
 > (import → edit → build → deploy) that handles all data correctly is worth more than
 > half-finished advanced features.
 
+### ✅ P0: rebuild-game WIPES ALL DATABASES TO BACKUP STATE — FIXED
+
+**Root cause:** When sqlserver container is recreated, SQL Server starts with an empty
+`sys.databases` — the .mdf files are on the volume but not yet registered. The existence
+check saw COUNT=0 and triggered `RESTORE ... WITH REPLACE`, overwriting live data.
+
+**Two-layer fix:**
+1. `rebuild-game.bat` — explicitly lists game services in `up -d`; sqlserver is never touched
+2. `setup-sql.ps1` — when .mdf files exist but db is unregistered, ATTACH instead of restore.
+   Only falls through to `RESTORE FROM DISK` when no data files exist at all (fresh volume).
+   Removed `WITH REPLACE` from restore path entirely (restoring over existing data is never safe).
+
+---
+
 ### ✅ P0: SHN File Inspection CLI (`mimir shn`) — DONE
 
 Implemented. Commands:
@@ -439,15 +453,22 @@ mimir deploy webapp Z:\my-vite-app\dist
 
 #### Checklist
 
-* [ ] `src/Mimir.StaticServer/Mimir.StaticServer.csproj` (web SDK, no extra packages)
-* [ ] `src/Mimir.StaticServer/Program.cs` (5 lines: UseDefaultFiles + UseStaticFiles + fallback)
-* [ ] `deploy/Dockerfile.webapp` (aspnet:10.0 base, copies webapp-publish/)
-* [ ] `deploy/webapp.bat` (optional sync, conditional publish, docker compose up)
-* [ ] `deploy/docker-compose.yml` — add `webapp` service with `WEBAPP_CONTEXT`/`WEBAPP_DOCKERFILE` vars
-* [ ] `src/Mimir.Api/Program.cs` — add opt-in `CORS_ORIGINS` support
-* [ ] `deploy/docker-compose.yml` — add `CORS_ORIGINS` passthrough to `api` service
-* [ ] `Mimir.sln` — add Mimir.StaticServer (GUID `{A1B2C3D4-000B-000B-000B-00000000000B}`)
-* [ ] `mimir.bat` — add `webapp` and `api` to the Available scripts list
+* [x] `src/Mimir.StaticServer/Mimir.StaticServer.csproj` (web SDK + LettuceEncrypt)
+* [x] `src/Mimir.StaticServer/Program.cs` (config.json endpoint + static files + SPA fallback + optional HTTPS)
+* [x] `src/Mimir.StaticServer/wwwroot/index.html` + `app.js` + `style.css` — SPA: leaderboard / register / login / change-password
+* [x] `deploy/Dockerfile.webapp` (aspnet:10.0 base, copies webapp-publish/)
+* [x] `deploy/webapp.bat` (conditional publish, docker compose up)
+* [x] `deploy/docker-compose.yml` — webapp service + CORS/Turnstile/reCAPTCHA/HTTPS env vars on api
+* [x] `src/Mimir.Api/Program.cs` — rate limiting, CORS, /api/config, CaptchaService, optional HTTPS
+* [x] `src/Mimir.Api/Services/CaptchaService.cs` — Turnstile / reCAPTCHA / no-op provider
+* [x] `src/Mimir.Api/Services/CharacterService.cs` — GetLeaderboardAsync (TOP 100 by exp)
+* [x] `src/Mimir.Api/Endpoints/CharacterEndpoints.cs` — GET /api/leaderboard
+* [x] `src/Mimir.Api/Endpoints/AccountEndpoints.cs` — captcha verify on POST /api/accounts
+* [x] `src/Mimir.Api/Endpoints/AuthEndpoints.cs` — captcha-after-failure login, set-web-password
+* [x] `src/Mimir.Api/Services/AccountService.cs` — SetWebPasswordAsync
+* [x] `src/Mimir.Api/Models/AccountModels.cs` — CaptchaToken fields, LoginResponse with RequiresCaptcha
+* [x] `Mimir.sln` — added Mimir.StaticServer (GUID `{A1B2C3D4-000B-000B-000B-00000000000B}`)
+* [x] `mimir.bat` — added `webapp` to Available scripts list
 
 ### P3: Extract Patch System into Standalone Library (`Patcher`)
 
