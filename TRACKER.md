@@ -275,6 +275,32 @@ time. Docker named pipe mounted for host engine access. SSH deploy key support v
 
 ---
 
+### ✅ EXPLAINED — CI/CD appears to ignore committed data changes (root cause: rowEnvironments)
+
+Change was committed and pushed. CI ran. All CI hashes match (build = deployed = container
+= `e233c919`) but local manual deploy has `d65b2344` (the correct new version). CI is
+consistently building the wrong version.
+
+Hashes:
+- CI build/deployed/container: `e233c919` (old — "Short Sword")
+- Local manual server:          `d65b2344` (new — "Not So Short Sword")
+
+Suspected causes:
+1. **`git reset --hard origin/master` not fetching the new commit** — CI may be on a
+   detached HEAD or fetching the wrong remote/branch. Check CI logs for the
+   `Update repository` step — does it show the new commit hash?
+2. **`mimir build` reading from wrong project dir** — `mimir.bat` walks UP from CWD to
+   find `mimir.json`. If there's a stale `mimir.json` above the workspace, it would
+   build from there. Check what `MIMIR_PROJ_DIR` resolves to in CI.
+3. **ItemInfo.json gitignored in project repo** — if the data file is excluded by
+   `.gitignore`, git would never commit it and CI would always build from a stale copy.
+   Check: `git check-ignore -v data/shn/ItemInfo.json` (or wherever it lives).
+
+* [ ] Add CI step: `git log --oneline -3` after `Update repository` to confirm correct commit
+* [ ] Add CI step: print ItemInfo.json line containing "Short Sword" or "Not So Short Sword"
+* [ ] Confirm `MIMIR_PROJ_DIR` in CI via `echo %MIMIR_PROJ_DIR%` in server.bat or before mimir build
+* [ ] Check .gitignore in project repo for data/ exclusions
+
 ### P1: BUG — Patch v1 not auto-applied by fresh clients (BLOCKER)
 
 First patch is version 1, but version 1 also appears to be the "1st master patch applied"
@@ -286,13 +312,24 @@ client that has never patched. Needs investigation in `deploy/player/patch.bat` 
 * [ ] Trace: compare `minIncrementalVersion`, `latestVersion`, and client version logic
 * [ ] Fix: ensure v1 incremental is applied for v0 clients
 
-### P1: BUG — shell save strips `rowEnvironments` from all JSON files
+### P1: BUG — `mimir import` strips all `rowEnvironments` from JSON files
 
-Some `mimir` command (shell `.save` or `edit`) removes all `rowEnvironments` from JSON
-files, causing lots of git noise and likely broken multi-env exports on next build.
+`mimir import` (full reimport confirmed) overwrites JSON files without preserving
+`rowEnvironments`, wiping all per-environment merge metadata. Causes 1433+ changed files
+in git, all being rowEnvironments removals. Not the shell — import is the culprit.
 
-* [ ] Identify which command/code path discards `rowEnvironments`
-* [ ] Fix: preserve `rowEnvironments` on round-trip (read → modify → write)
+**Secondary effect:** Edits to top-level fields work locally after a reimport (rowEnvironments
+gone, top-level wins) but are silently ignored by CI if the committed JSON still has
+rowEnvironments (env-specific value wins at build time). Makes data edits appear to "not
+stick" on CI-deployed servers until the stripped files are committed.
+
+Root cause: import's JSON write path does not preserve existing `rowEnvironments` when
+updating rows — it writes fresh data from the imported source, discarding merge metadata.
+
+* [ ] Find the import write path (likely `TableWriter` or `ProjectWriter`) and preserve
+      any existing `rowEnvironments` on matching rows when writing updated data
+* [ ] Consider: when user edits a field that has a `rowEnvironments` override, warn or
+      also update the per-env value
 
 ### P1: BUG — `certs` volume mount fails when directory doesn't exist
 
@@ -314,6 +351,30 @@ Despite previous fixes, SQL container is still being touched.
 
 * [ ] Trace which docker compose command in `server.bat` includes sqlserver
 * [ ] Explicitly exclude sqlserver from the affected services list
+
+### P2: BUG — Intermittent SA_PASSWORD login failure on first container start
+
+On first deploy of the dev instance, all game containers (Account, AccountLog, Character,
+GameLog) failed with `DB_Init FAILED` / Error 18456 "Password did not match". SQL Server
+was healthy and the password was confirmed correct via sqlcmd. A second restart of the
+game containers resolved it with no config changes.
+
+Root cause: the healthcheck uses `-E` (Windows auth) so it passes as soon as SQL Server
+starts — before `setup-sql.ps1` has finished restoring `.bak` files and changing the SA
+password. Game containers start immediately after the healthcheck passes and connect while
+SA password change / DB recovery is still in progress.
+
+Sequence:
+1. SQL Server starts → healthcheck passes (Windows auth, no SA needed)
+2. setup-sql.ps1: restores .bak files → DB recovery (takes several seconds)
+3. Game containers start (healthcheck already satisfied)
+4. Game containers connect with SA_PASSWORD → fail (SA not yet updated or DB in recovery)
+5. setup-sql.ps1 finishes → SA password set correctly
+6. Manual restart of game containers → all connect fine
+
+* [ ] Fix healthcheck to use SA login: `sqlcmd -S .\SQLEXPRESS -U sa -P "$SA_PASSWORD" -C -Q "SELECT 1"`
+      so it only passes once SA password is correct and DB recovery is complete
+* [ ] Or: have game containers retry DB_Init with backoff instead of hard-failing
 
 ### P2: Secrets system (`mimir deploy secret set/get/list`)
 
