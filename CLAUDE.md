@@ -1,5 +1,45 @@
 # Mimir - Fiesta Online Server Data Toolkit
 
+## TASKS TO SORT:
+Need to move "deployPath" into repo so that we can deploy without needing to download fresh server files etc.
+Need an "init.bat" that we can use to find/user input location of mimir (Maybe even make it the normal approach to add mimir as a submodule?)
+Readme that explains how to create an entirely new mimir project repo
+Auto generate readme for mimir project repo
+Make sure we're okay with ServerInfo containing SQL PW (maybe this one should not be handled by mimir, just copy)
+Auto-generated gitignore is missing some stuff.
+Mimir tail? Or some other way to easily tail from inside project dir
+
+✘ Container myserver-api-1        Error response from daemon: invalid volume specif...                            0.5s
+Error response from daemon: invalid volume specification: 'D:\Games\Fiesta Mimir\ProjectMimir\deploy\certs:C:/certs:rw': invalid mount config for type "bind": bind source path does not exist: d:\games\fiesta mimir\projectmimir\deploy\certs
+
+Should probs use project folder certs not mimir certs
+
+How do I set up letsencrypt? also track in readme
+
+auto promote to https (only if https is enabled => certs exist or letsencrypt key or so)
+
+Add to readme how to set up SPA (mimir set API_URL / CORS_ORIGINS
+
+
+we shoul dhave a mimir.env.secrets file that isn't committed (and maybe a secret-keys file so people can query which secrets need filling out)
+E.g. mimir deploy secret set SA_PASSWORD 1234
+=> writes into .env.secrets.keys: SA_PASSWORD [This can be committed]
+=> writes into .env.secrets: SA_PASSWORD=1234 [This is gitignored]
+=> on setup of the repo, we can autodetect that SA_PASSWORD secret hasn't been set, prompt for it.
+
+Some way to auto restart server if it crashes or so.
+
+shell should have a .help
+
+mimir deploy server still destroys sql container (but db stays! Yay)
+
+first patch is version 1, but version 1 seems to also be "1st master patch applied" so patch 1 is not auto applied by client. BLOCKER (but repair does work)
+
+Some mimir (shell => save?) command also remove all "rowEnvironments" from all json files => loads of noise in git (and likely broken exports)
+
+git webhook => trigger mimir build etc. (ideally from within container, and ideally same version as the mimir that created all the containers etc.)
+So when in my project I push to e.g. dev it auto builds, packs, deploys to my local server and when I push to e.g. prod it does it to my main live server.
+
 ## Environment
 
 - **Platform**: Windows — use forward slashes (`Z:/path`) or double backslashes (`Z:\\path`) in bash/CLI commands

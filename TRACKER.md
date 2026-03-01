@@ -244,6 +244,7 @@ Milestones:
 * [ ] GitHub Actions workflow: build + test on every push/PR
 * [ ] On merge to main: mimir import check + build + pack → upload patch zips as artifacts
 * [ ] Exit non-zero propagated so CI fails on broken data
+* [ ] **Clean-slate CI server**: runner uses `actions/checkout@v4` (clean copy each run) + has its own Docker containers separate from the dev server. Runner's work dir is its own project dir; containers are namespaced independently (e.g. `my-server-ci-*`). `rebuild-sql` done once on first setup, then every push just builds + restarts game containers. No `git pull` on live working copy — CI and dev are fully independent.
 
 ### ✅ P2: Game Management REST API
 
@@ -264,7 +265,151 @@ ASP.NET Core container on the same Docker Compose network as SQL Server. `src/Mi
 
 **Schema notes:** `GiveItemAsync` targets `tAccountItem` (adjust to `tCashItem`/`tPremiumItem` as needed). `ShopService` targets `tMallGoods` (adjust if different). `usp_User_insert` params assumed `@userID, @userPW, @email`. Admin = `nAuthID = 9`.
 
-### P2: Split `mimir` CLI into focused sub-projects
+### ✅ P2: CI/CD webhook container (`mimir deploy ci`) — DONE
+
+`Mimir.Webhook` ASP.NET Core container (profiles: [ci]) on port 9000. Receives GitHub
+push webhooks, validates HMAC-SHA256, runs: git pull → mimir build --all → mimir pack
+(optional) → robocopy → docker restart. MinGit + Mimir.Cli baked into image at deploy
+time. Docker named pipe mounted for host engine access. SSH deploy key support via
+`CI_SSH_DIR` volume mount.
+
+---
+
+### P1: BUG — Patch v1 not auto-applied by fresh clients (BLOCKER)
+
+First patch is version 1, but version 1 also appears to be the "1st master patch applied"
+marker, so fresh clients skip it and go straight to master. Repair works correctly.
+Root cause likely in how `minIncrementalVersion` vs first patch version interact on a
+client that has never patched. Needs investigation in `deploy/player/patch.bat` + `Program.cs`.
+
+* [ ] Reproduce: fresh client (v0), run patcher, confirm v1 incremental not applied
+* [ ] Trace: compare `minIncrementalVersion`, `latestVersion`, and client version logic
+* [ ] Fix: ensure v1 incremental is applied for v0 clients
+
+### P1: BUG — shell save strips `rowEnvironments` from all JSON files
+
+Some `mimir` command (shell `.save` or `edit`) removes all `rowEnvironments` from JSON
+files, causing lots of git noise and likely broken multi-env exports on next build.
+
+* [ ] Identify which command/code path discards `rowEnvironments`
+* [ ] Fix: preserve `rowEnvironments` on round-trip (read → modify → write)
+
+### P1: BUG — `certs` volume mount fails when directory doesn't exist
+
+```
+Error response from daemon: invalid volume specification: '...deploy\certs:C:/certs:rw':
+bind source path does not exist
+```
+The `api` and `webapp` services mount `${CERT_DIR:-./certs}` but the `certs/` dir
+is never created. Also, it should default to the **project folder**, not the deploy folder.
+
+* [ ] Create `certs/` dir automatically (in `api.bat` / `webapp.bat`) if it doesn't exist
+* [ ] Change default from `./certs` (relative to deploy/) to `${MIMIR_PROJ_DIR}/certs`
+* [ ] Only mount certs volume when HTTPS is actually configured
+
+### P1: BUG — `server.bat` still destroys/touches SQL container
+
+`mimir deploy server` should only affect game-process containers, never `sqlserver`.
+Despite previous fixes, SQL container is still being touched.
+
+* [ ] Trace which docker compose command in `server.bat` includes sqlserver
+* [ ] Explicitly exclude sqlserver from the affected services list
+
+### P2: Secrets system (`mimir deploy secret set/get/list`)
+
+Separate secrets (gitignored) from non-secret deploy config (committable).
+
+```
+mimir deploy secret set SA_PASSWORD 1234
+```
+- Writes key name to `.env.secrets.keys` (committable — documents which secrets exist)
+- Writes `SA_PASSWORD=1234` to `.env.secrets` (gitignored — never committed)
+- On startup / `mimir deploy start`, loads both `.mimir-deploy.env` and `.env.secrets`
+- `mimir deploy secret list` — shows all declared keys + whether each is set
+- If a required secret is unset, prompt for it on first deploy
+
+Files:
+* [ ] `deploy/secret.bat` — `secret set KEY VALUE` / `secret get KEY` / `secret list`
+* [ ] Update `mimir.bat` to load `.env.secrets` alongside `.mimir-deploy.env`
+* [ ] Update all deploy `.bat` files to source both env files
+* [ ] Update `.gitignore` template to include `.env.secrets`
+
+### P2: HTTPS / Let's Encrypt setup
+
+Auto-provision TLS via LettuceEncrypt (already a dependency). Activate when
+`LETSENCRYPT_DOMAIN` + `LETSENCRYPT_EMAIL` env vars are set. HTTP-only by default.
+
+Priority (first match wins):
+1. `LETSENCRYPT_DOMAIN` set → auto cert, ports 80+443
+2. `HTTPS_CERT_PATH` set → manual PFX, ports 5001/8081 + HTTP kept
+3. Neither → HTTP only (dev default)
+
+* [ ] Implement LettuceEncrypt path in `Mimir.Api/Program.cs`
+* [ ] Implement LettuceEncrypt path in `Mimir.StaticServer/Program.cs`
+* [ ] docker-compose: expose 80+443 when LE configured; cert persistence volume
+* [ ] Document setup in project README
+
+### P2: Auto-promote HTTP → HTTPS redirect
+
+When HTTPS is enabled (certs exist or LettuceEncrypt configured), auto-redirect
+HTTP requests to HTTPS. Only active when HTTPS is actually configured.
+
+* [ ] Add `app.UseHttpsRedirection()` conditionally in both Mimir.Api and Mimir.StaticServer
+
+### P2: Project scaffolding (`init.bat` / project README / .gitignore)
+
+When setting up a new Mimir project repo, several things need to exist:
+- `init.bat` — finds/prompts for mimir location, sets up the project
+- Auto-generated `README.md` describing the project
+- Complete `.gitignore` covering: `build/`, `deployed/`, `.env.secrets`, `*.bak`, logs, etc.
+- Optionally: mimir as a git submodule
+
+* [ ] `init.bat` — interactive setup: mimir path, SA_PASSWORD, JWT_SECRET, etc.
+* [ ] `mimir init` CLI command — scaffold README.md + .gitignore for new projects
+* [ ] Document full new-project setup in Mimir README
+* [ ] Audit auto-generated `.gitignore` for missing entries
+
+### P2: `mimir tail` — tail container logs from project dir
+
+`mimir deploy tail [service]` — equivalent to `docker compose logs -f [service]`
+but callable from the project directory without cd-ing to the deploy folder.
+
+* [ ] Add `tail.bat` to `deploy/` — calls `docker compose logs -f %2 %3 %4`
+* [ ] Add `tail` to available scripts in `mimir.bat`
+
+### P2: Shell `.help` command
+
+`mimir shell` should print available dot-commands when `.help` is typed.
+
+* [ ] Add `.help` handler to shell loop listing all dot-commands
+
+### P2: ServerInfo.txt and SQL password handling
+
+ServerInfo.txt contains the SQL SA password in plain text. Mimir currently
+manages/overwrites it. Consider whether it should be excluded from Mimir management
+(copy-only, not round-tripped) to avoid committing SQL credentials.
+
+* [ ] Investigate whether ServerInfo.txt is currently imported/built by Mimir
+* [ ] If so: add exclusion or copy-only action so it's never in git
+
+### P2: `restart: on-failure` for game containers
+
+Game server processes can crash. Docker should auto-restart them.
+
+* [ ] Add `restart: on-failure` (or `unless-stopped`) to gameserver anchor in docker-compose.yml
+* [ ] Ensure `KEEP_ALIVE=1` still works (overrides restart policy for debugging)
+
+### P2: Move `deployPath` into project repo
+
+Currently server binaries (exes, DLLs, GamigoZR) are referenced from the host path
+at deploy time. This means a fresh clone + deploy requires downloading server files
+separately. Moving `deployPath` contents into the repo (or a submodule) would make
+the project self-contained.
+
+* [ ] Decide: direct copy in repo vs. submodule vs. external volume reference
+* [ ] `mimir env server set deploy-path` should wire up to Dockerfile COPY step
+
+### Split `mimir` CLI into focused sub-projects
 
 As the CLI grows, split `Mimir.Cli` into separate dotnet tool projects by domain so each is small, focused, and independently documentable/discoverable:
 
