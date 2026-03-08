@@ -291,10 +291,7 @@ Suspected causes:
    `.gitignore`, git would never commit it and CI would always build from a stale copy.
    Check: `git check-ignore -v data/shn/ItemInfo.json` (or wherever it lives).
 
-* [ ] Add CI step: `git log --oneline -3` after `Update repository` to confirm correct commit
-* [ ] Add CI step: print ItemInfo.json line containing "Short Sword" or "Not So Short Sword"
-* [ ] Confirm `MIMIR_PROJ_DIR` in CI via `echo %MIMIR_PROJ_DIR%` in server.bat or before mimir build
-* [ ] Check .gitignore in project repo for data/ exclusions
+Root cause was `rowEnvironments` noise stripping — now fixed. Diagnostic steps no longer needed.
 
 ### ✅ P0: BUG — CI/CD restarts SQL on every deploy → SA password race → game servers fail — FIXED
 
@@ -732,13 +729,21 @@ fresh env vars without rebuilding the image. Env-only changes (KEEP_ALIVE, SA_PA
 etc.) — run `mimir deploy restart`. Image changes (Dockerfile, scripts, binaries) —
 run `mimir deploy rebuild-game`.
 
-### P2c: Port shift for simultaneous servers
+### ✅ P2c: Port shift for simultaneous servers — DONE
 
-Add a `portShift` value to `mimir.json` (or `deploy/` config) that offsets all game server ports by a fixed amount. First server uses base ports (9010 etc.), second server shifts by 100 (9110), third by 200, etc.
+`docker-compose.yml` uses `${LOGIN_PORT:-9010}`, `${WM_PORT:-9013}`, etc. for every service.
+`mimir.bat` now auto-computes all port vars from a single `PORT_SHIFT` value (set via
+`mimir deploy secret set PORT_SHIFT 100`). Individual vars take precedence if already set.
 
-Port shift applies to all game process ports defined in the Docker Compose / server config templates at project init time. Each project gets a unique non-overlapping port range so two full server stacks can run on the same host.
+Shifts: LOGIN/WM/ZONE00–04 game ports, PATCH_PORT, API_PORT, WEBAPP_PORT, CI_PORT.
+SQL_PORT is not shifted (internal-only, clients never connect directly).
 
-**Partially done**: `docker-compose.yml` already uses `${LOGIN_PORT:-9010}`, `${WM_PORT:-9013}`, `${ZONE00_PORT:-9016}`, etc. for every service, so ports can be overridden individually via `.mimir-deploy.env`. What's missing is a single `PORT_SHIFT` variable that auto-computes all game port vars (login/wm/zone00–04) so you only set one value instead of seven.
+**Usage:**
+```bat
+:: Second server instance — all ports shifted by 100
+mimir deploy secret set PORT_SHIFT 100
+:: Login: 9110, WM: 9113, Zone00: 9116 … Zone04: 9128, Patch: 8180, API: 5100
+```
 
 ### P1: Text Table String Length Bug
 
