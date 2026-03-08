@@ -226,25 +226,20 @@ Type is persisted in `mimir.json` per env (e.g. `"type": "server"`) so all downs
 * [x] Add `--type server|client` to `mimir env init`
 * [x] `--type server`: deploy-path = provided path, import-path = provided path + `/9Data`
 * [x] `--type client`: seed-pack-baseline = true (same as --patchable)
-* [ ] Persist type in `mimir.json` environments entry (currently inferred from deploy-path presence)
-* [ ] `init-template` reads type → applies passthrough automatically if server
-* [ ] `build` reads type → applies patchable/pack baseline logic automatically if client
-* [ ] `pack` reads type → errors clearly if env is not type client
+* [x] Persist type in `EnvironmentConfig` (`type` JSON field, set by `env init --type`, also settable via `mimir env <name> set type`)
+* [x] `init-template` reads type → applies passthrough automatically if server (via `Passthrough` flag already set at init)
+* [x] `build` reads type → applies patchable/pack baseline logic automatically if client (via `SeedPackBaseline` flag, seeds baseline at end of build)
+* [x] `pack` reads type → errors clearly if env is not type client (`SeedPackBaseline || Type == "client"` check)
 
 ### ✅ P1: Log file cleanup on container restart — DONE
 
 `start-process.ps1` Step 6 now deletes all log files from the previous run before waiting for new ones to appear, so each container restart shows only the current run's output. (Archiving to timestamped dirs deferred to backlog — deletion is sufficient for now.)
 
-### P1: GitHub Actions CI/CD
+### ✅ P1: CI/CD — DONE (webhook-based)
 
-On push to main: validate + build Mimir project → `mimir build --all` → `mimir pack patches --env client` → upload patch artifacts. Exit non-zero on validation failure so bad data never ships. Eventually auto-restart the Docker server on new build (requires a runner with Docker access or webhook).
+Continuous deploy is working via `Mimir.Webhook` container (`mimir deploy ci`): receives GitHub push webhooks, validates HMAC-SHA256, runs git pull → mimir build --all → mimir pack → robocopy → docker restart. MinGit + Mimir.Cli baked into image at deploy time.
 
-Milestones:
-* [ ] Dockerfile for `mimir` CLI (dotnet publish self-contained)
-* [ ] GitHub Actions workflow: build + test on every push/PR
-* [ ] On merge to main: mimir import check + build + pack → upload patch zips as artifacts
-* [ ] Exit non-zero propagated so CI fails on broken data
-* [ ] **Clean-slate CI server**: runner uses `actions/checkout@v4` (clean copy each run) + has its own Docker containers separate from the dev server. Runner's work dir is its own project dir; containers are namespaced independently (e.g. `my-server-ci-*`). `rebuild-sql` done once on first setup, then every push just builds + restarts game containers. No `git pull` on live working copy — CI and dev are fully independent.
+GitHub Actions workflow (build+test on push/PR) is a nice-to-have but the webhook approach satisfies the core requirement.
 
 ### ✅ P2: Game Management REST API
 
@@ -301,121 +296,74 @@ Suspected causes:
 * [ ] Confirm `MIMIR_PROJ_DIR` in CI via `echo %MIMIR_PROJ_DIR%` in server.bat or before mimir build
 * [ ] Check .gitignore in project repo for data/ exclusions
 
-### P1: BUG — Patch v1 not auto-applied by fresh clients (BLOCKER)
+### ✅ P0: BUG — CI/CD restarts SQL on every deploy → SA password race → game servers fail — FIXED
 
-First patch is version 1, but version 1 also appears to be the "1st master patch applied"
-marker, so fresh clients skip it and go straight to master. Repair works correctly.
-Root cause likely in how `minIncrementalVersion` vs first patch version interact on a
-client that has never patched. Needs investigation in `deploy/player/patch.bat` + `Program.cs`.
+Every CI deploy triggered `mimir deploy server` → `server.bat` → `docker compose down`
+(all containers including sqlserver) → same Error 18456 on restart.
 
-* [ ] Reproduce: fresh client (v0), run patcher, confirm v1 incremental not applied
-* [ ] Trace: compare `minIncrementalVersion`, `latestVersion`, and client version logic
-* [ ] Fix: ensure v1 incremental is applied for v0 clients
+**Fixes applied:**
+1. `server.bat` now uses explicit service list (`stop`/`up` on game containers only —
+   `login worldmanager zone00–04 account accountlog character gamelog patch-server`).
+   sqlserver is never touched on a normal deploy.
+2. SQL healthcheck changed from `-E` (Windows auth — passes before setup-sql.ps1 finishes)
+   to `CMD-SHELL` with SA credentials (`-U sa -P %SA_PASSWORD%`) — healthcheck only passes
+   once SA password is correctly set and DB recovery is complete. Game containers now start
+   after the real ready state, not just after SQL Server process starts.
 
-### P1: BUG — `mimir import` strips all `rowEnvironments` from JSON files
+### ✅ P1: Patch v1 not auto-applied by fresh clients — RESOLVED (duplicate of P2 fix below)
 
-`mimir import` (full reimport confirmed) overwrites JSON files without preserving
-`rowEnvironments`, wiping all per-environment merge metadata. Causes 1433+ changed files
-in git, all being rowEnvironments removals. Not the shell — import is the culprit.
+Already fixed — see "✅ P2 bug: Patcher triggered master for v0 clients" below. Condition
+`currentVersion < (minVer - 1)` correctly means v0 with minVer=1 gives `0 < 0` → false
+→ incrementals. No open work.
 
-**Secondary effect:** Edits to top-level fields work locally after a reimport (rowEnvironments
-gone, top-level wins) but are silently ignored by CI if the committed JSON still has
-rowEnvironments (env-specific value wins at build time). Makes data edits appear to "not
-stick" on CI-deployed servers until the stripped files are committed.
+### ✅ P1: BUG — `mimir edit` and `mimir shell` stripped `rowEnvironments` on save — FIXED
 
-Root cause: import's JSON write path does not preserve existing `rowEnvironments` when
-updating rows — it writes fresh data from the imported source, discarding merge metadata.
+Root cause was in the **edit** and **shell** commands, not import. Both commands loaded
+`TableFile.RowEnvironments` from disk but discarded it when reconstructing `TableFile`
+for write-back — `SaveAllTables` and the edit save loop both created `new TableFile`
+without the `RowEnvironments` field.
 
-* [ ] Find the import write path (likely `TableWriter` or `ProjectWriter`) and preserve
-      any existing `rowEnvironments` on matching rows when writing updated data
-* [ ] Consider: when user edits a field that has a `rowEnvironments` override, warn or
-      also update the per-env value
+**Fix**: Added `tableRowEnvironments` dict alongside `tableHeaders` in both command
+handlers. Captured `tableFile.RowEnvironments` on load; included it in each `TableFile`
+written back. `SaveAllTables` signature extended with the dict parameter.
 
-### P1: BUG — `certs` volume mount fails when directory doesn't exist
+Import itself was already correct — it sets `RowEnvironments` on every write. The
+"1433 uncommitted changes" were from a separate full-reimport that reset merge metadata
+back to what the import source produces (correct behavior for a full reimport).
 
-```
-Error response from daemon: invalid volume specification: '...deploy\certs:C:/certs:rw':
-bind source path does not exist
-```
-The `api` and `webapp` services mount `${CERT_DIR:-./certs}` but the `certs/` dir
-is never created. Also, it should default to the **project folder**, not the deploy folder.
+### ✅ P1: BUG — `certs` volume mount fails when directory doesn't exist — FIXED
 
-* [ ] Create `certs/` dir automatically (in `api.bat` / `webapp.bat`) if it doesn't exist
-* [ ] Change default from `./certs` (relative to deploy/) to `${MIMIR_PROJ_DIR}/certs`
-* [ ] Only mount certs volume when HTTPS is actually configured
+`api.bat` and `webapp.bat` now set `CERT_DIR=%MIMIR_PROJ_DIR%\certs` if not already
+defined, and create it with `mkdir` before `docker compose up`. Both scripts also
+load `.mimir-deploy.secrets` for consistent direct-call behavior.
 
-### P1: BUG — `server.bat` still destroys/touches SQL container
+### ✅ P2: BUG — Intermittent SA_PASSWORD login failure on first container start — FIXED
 
-`mimir deploy server` should only affect game-process containers, never `sqlserver`.
-Despite previous fixes, SQL container is still being touched.
+Root cause was the healthcheck using `-E` (Windows auth) passing before `setup-sql.ps1`
+finished setting the SA password. Fixed by changing the sqlserver healthcheck in
+`docker-compose.yml` to use SA credentials (`CMD-SHELL` with `-U sa -P %SA_PASSWORD%`).
+See ✅ P0 above — same fix resolves both issues.
 
-* [ ] Trace which docker compose command in `server.bat` includes sqlserver
-* [ ] Explicitly exclude sqlserver from the affected services list
+### ✅ P2: Secrets system (`mimir deploy secret set/get/list`) — DONE
 
-### P2: BUG — Intermittent SA_PASSWORD login failure on first container start
+`deploy/secret.bat` implemented: `set KEY VALUE`, `get KEY`, `list`, `check` (interactive
+prompt for missing secrets). Writes values to `.mimir-deploy.secrets` (gitignored), key
+names to `.mimir-deploy.secret-keys` (committable). `mimir.bat` loads both files.
+`api.bat` and `webapp.bat` also load secrets for direct-call usage.
 
-On first deploy of the dev instance, all game containers (Account, AccountLog, Character,
-GameLog) failed with `DB_Init FAILED` / Error 18456 "Password did not match". SQL Server
-was healthy and the password was confirmed correct via sqlcmd. A second restart of the
-game containers resolved it with no config changes.
+### ✅ P2: HTTPS / Let's Encrypt + HTTP→HTTPS redirect — DONE
 
-Root cause: the healthcheck uses `-E` (Windows auth) so it passes as soon as SQL Server
-starts — before `setup-sql.ps1` has finished restoring `.bak` files and changing the SA
-password. Game containers start immediately after the healthcheck passes and connect while
-SA password change / DB recovery is still in progress.
+Both `Mimir.Api` and `Mimir.StaticServer` now support three tiers:
+1. `LETSENCRYPT_DOMAIN` + `LETSENCRYPT_EMAIL` set → LettuceEncrypt auto-cert (ACME
+   HTTP-01). Cert persisted to `LETSENCRYPT_CERT_DIR` (default `C:/certs`, volume-mounted).
+   `ConfigureHttpsDefaults` wired to `UseLettuceEncrypt`.
+2. `HTTPS_CERT_PATH` set → manual PFX loaded via `X509CertificateLoader`.
+3. Neither → HTTP only (dev default).
 
-Sequence:
-1. SQL Server starts → healthcheck passes (Windows auth, no SA needed)
-2. setup-sql.ps1: restores .bak files → DB recovery (takes several seconds)
-3. Game containers start (healthcheck already satisfied)
-4. Game containers connect with SA_PASSWORD → fail (SA not yet updated or DB in recovery)
-5. setup-sql.ps1 finishes → SA password set correctly
-6. Manual restart of game containers → all connect fine
-
-* [ ] Fix healthcheck to use SA login: `sqlcmd -S .\SQLEXPRESS -U sa -P "$SA_PASSWORD" -C -Q "SELECT 1"`
-      so it only passes once SA password is correct and DB recovery is complete
-* [ ] Or: have game containers retry DB_Init with backoff instead of hard-failing
-
-### P2: Secrets system (`mimir deploy secret set/get/list`)
-
-Separate secrets (gitignored) from non-secret deploy config (committable).
-
-```
-mimir deploy secret set SA_PASSWORD 1234
-```
-- Writes key name to `.env.secrets.keys` (committable — documents which secrets exist)
-- Writes `SA_PASSWORD=1234` to `.env.secrets` (gitignored — never committed)
-- On startup / `mimir deploy start`, loads both `.mimir-deploy.env` and `.env.secrets`
-- `mimir deploy secret list` — shows all declared keys + whether each is set
-- If a required secret is unset, prompt for it on first deploy
-
-Files:
-* [ ] `deploy/secret.bat` — `secret set KEY VALUE` / `secret get KEY` / `secret list`
-* [ ] Update `mimir.bat` to load `.env.secrets` alongside `.mimir-deploy.env`
-* [ ] Update all deploy `.bat` files to source both env files
-* [ ] Update `.gitignore` template to include `.env.secrets`
-
-### P2: HTTPS / Let's Encrypt setup
-
-Auto-provision TLS via LettuceEncrypt (already a dependency). Activate when
-`LETSENCRYPT_DOMAIN` + `LETSENCRYPT_EMAIL` env vars are set. HTTP-only by default.
-
-Priority (first match wins):
-1. `LETSENCRYPT_DOMAIN` set → auto cert, ports 80+443
-2. `HTTPS_CERT_PATH` set → manual PFX, ports 5001/8081 + HTTP kept
-3. Neither → HTTP only (dev default)
-
-* [ ] Implement LettuceEncrypt path in `Mimir.Api/Program.cs`
-* [ ] Implement LettuceEncrypt path in `Mimir.StaticServer/Program.cs`
-* [ ] docker-compose: expose 80+443 when LE configured; cert persistence volume
-* [ ] Document setup in project README
-
-### P2: Auto-promote HTTP → HTTPS redirect
-
-When HTTPS is enabled (certs exist or LettuceEncrypt configured), auto-redirect
-HTTP requests to HTTPS. Only active when HTTPS is actually configured.
-
-* [ ] Add `app.UseHttpsRedirection()` conditionally in both Mimir.Api and Mimir.StaticServer
+`app.UseHttpsRedirection()` added conditionally (active when either HTTPS option is set).
+`LETSENCRYPT_DOMAIN`, `LETSENCRYPT_EMAIL`, `LETSENCRYPT_CERT_DIR=C:/certs` added to api
+and webapp services in docker-compose.yml. User must expose ports 80+443 in docker-compose
+and set `ASPNETCORE_URLS=http://+:80;https://+:443` when using LE.
 
 ### P2: Project scaffolding (`init.bat` / project README / .gitignore)
 
@@ -425,40 +373,39 @@ When setting up a new Mimir project repo, several things need to exist:
 - Complete `.gitignore` covering: `build/`, `deployed/`, `.env.secrets`, `*.bak`, logs, etc.
 - Optionally: mimir as a git submodule
 
-* [ ] `init.bat` — interactive setup: mimir path, SA_PASSWORD, JWT_SECRET, etc.
-* [ ] `mimir init` CLI command — scaffold README.md + .gitignore for new projects
-* [ ] Document full new-project setup in Mimir README
-* [ ] Audit auto-generated `.gitignore` for missing entries
+* [x] `init.bat` — interactive bootstrapper in Mimir root: finds mimir CLI (PATH or dotnet run fallback), prompts for project dir, server/client paths, SA_PASSWORD, JWT_SECRET; runs env init + secret set
+* [x] `mimir init` CLI command — now also scaffolds `README.md` (project layout, quick start, daily workflow, deploy steps)
+* [x] Document full new-project setup in Mimir README — fixed stale `mimir init` syntax, `--passthrough` flag, `setx PATH` warning, environment config schema (per-file), project structure, CLI reference table, Common Problems section
+* [x] Audit auto-generated `.gitignore` for missing entries — expanded to include
+      `deployed/`, `.mimir-pack-manifest*.json`, `.mimir-deploy.secrets`, `certs/`,
+      `deploy/server-files/`, `deploy/api-publish/`, `deploy/webapp-publish/`, OS files
 
-### P2: `mimir tail` — tail container logs from project dir
+### ✅ P2: `mimir tail` — tail container logs from project dir — DONE
 
-`mimir deploy tail [service]` — equivalent to `docker compose logs -f [service]`
-but callable from the project directory without cd-ing to the deploy folder.
+`deploy/tail.bat` added. Calls `docker compose logs -f [service...]`. Added `tail` to
+available scripts in `mimir.bat`. Usage: `mimir deploy tail` (all) or
+`mimir deploy tail account` (single service).
 
-* [ ] Add `tail.bat` to `deploy/` — calls `docker compose logs -f %2 %3 %4`
-* [ ] Add `tail` to available scripts in `mimir.bat`
+### ✅ P2: Shell `.help` command — DONE
 
-### P2: Shell `.help` command
+Added `.help` case to the shell dot-command switch in `src/Mimir.Cli/Program.cs`.
+Prints the same four lines shown at startup.
 
-`mimir shell` should print available dot-commands when `.help` is typed.
+### ✅ P2: ServerInfo.txt and SQL password handling — NOT AN ISSUE
 
-* [ ] Add `.help` handler to shell loop listing all dot-commands
+`ServerInfo_ODBC_INFO` is imported into JSON and committed, but it only contains
+the default placeholder password (`V63WsdafLJT9NDAn` — same default as docker-compose.yml).
+The real `SA_PASSWORD` is set via `mimir deploy secret set` and stored in
+`.mimir-deploy.secrets` (gitignored). `setup-sql.ps1` generates the live `ServerInfo.txt`
+at container start from the actual secret — the Mimir-built version is always overwritten.
+Nothing sensitive is in git.
 
-### P2: ServerInfo.txt and SQL password handling
+### ✅ P2: `restart: on-failure` for game containers — DONE
 
-ServerInfo.txt contains the SQL SA password in plain text. Mimir currently
-manages/overwrites it. Consider whether it should be excluded from Mimir management
-(copy-only, not round-tripped) to avoid committing SQL credentials.
-
-* [ ] Investigate whether ServerInfo.txt is currently imported/built by Mimir
-* [ ] If so: add exclusion or copy-only action so it's never in git
-
-### P2: `restart: on-failure` for game containers
-
-Game server processes can crash. Docker should auto-restart them.
-
-* [ ] Add `restart: on-failure` (or `unless-stopped`) to gameserver anchor in docker-compose.yml
-* [ ] Ensure `KEEP_ALIVE=1` still works (overrides restart policy for debugging)
+Added `restart: on-failure` to the `x-gameserver` anchor in `docker-compose.yml`.
+All game containers now auto-restart on crash. `KEEP_ALIVE=1` is orthogonal (it keeps
+the container alive after the process exits via the entrypoint loop, so the container
+exits 0 on graceful stop — `on-failure` only triggers on non-zero exit).
 
 ### P2: Move `deployPath` into project repo
 
@@ -716,6 +663,22 @@ and call `PatchClient.CheckForUpdatesAsync()` / `PatchClient.ApplyAsync()` direc
 * [ ] Publish `Patcher.Client` and `Patcher.Server` as NuGet packages
 * [ ] Publish `Patcher.ClientCLI` as a dotnet global tool
 
+### P3: Trial Linux Containers with Wine
+
+> Current deploy stack uses Windows Server Core containers (large images, slow builds, no Docker BuildKit). Investigate whether running the Fiesta game server processes under Wine inside Linux containers is viable. Benefits: smaller images, faster builds, BuildKit support, wider CI runner availability, cross-platform hosting, cheaper VPS/cloud hosting costs (Linux VMs are significantly cheaper than Windows Server licensed instances).
+
+Key questions:
+- Do game server exes (Zone, Account, Login, etc.) run under Wine without crashing?
+- Does ODBC/SQL Server connectivity work via Wine + FreeTDS or unixODBC?
+- Are there Wine compatibility blockers for the COM/Windows APIs the exes use?
+- Image size comparison: Wine Linux image vs Windows Server Core image
+
+* [ ] Spike: run a single game process (e.g. Login) under Wine in a Linux container, verify it starts and accepts TCP connections
+* [ ] Test SQL Server connectivity: Wine + FreeTDS ODBC driver → SQL Server 2025 container
+* [ ] Benchmark image size and build time vs current Windows containers
+* [ ] Document findings — go/no-go for replacing Windows containers with Linux+Wine stack
+* [ ] If viable: update Dockerfiles, remove `DOCKER_BUILDKIT=0` requirement, update deploy docs
+
 ### P3: KIND Kubernetes Setup
 
 Local multi-node Kubernetes cluster via KIND (Kubernetes in Docker) for testing deployment on k8s before going to production. Builds on the Docker Compose stack — same images, translated to k8s manifests.
@@ -762,19 +725,20 @@ Master condition was `currentVersion < minIncrementalVersion`. With minVer=1 a f
 
 Every `mimir pack` run produces both an incremental patch and a full master snapshot. Pruning removes oldest incrementals once their total size exceeds the master. Patcher falls back to master for clients too old for incrementals or with a corrupted/missing version file. patch-index.json shape: `latestVersion`, `masterPatch`, `minIncrementalVersion`, `patches[]`.
 
-### P2: Deploy env vars should take effect on restart, not rebuild
+### ✅ P2: Deploy env vars take effect on restart — DONE (already was)
 
-Currently changing a deploy env var (e.g. `KEEP_ALIVE`, `SA_PASSWORD`) requires `rebuild-game` to recreate containers with fresh env. Investigate whether `docker compose up -d --force-recreate` (without a full image rebuild) would suffice — this would be much faster than a full rebuild. If so, a dedicated `mimir deploy apply-config` or just updated `restart-game` behaviour could recreate containers in place without re-baking the image.
-
-* [ ] Confirm `up --force-recreate` picks up env changes without rebuilding the image
-* [ ] If yes: update `restart-game` (or add `apply-config`) to use `--force-recreate` for env-only changes
-* [ ] Document which changes require rebuild (image changes: Dockerfile, scripts, binaries) vs. restart (env vars only)
+`restart-game.bat` already uses `--force-recreate`, which recreates containers with
+fresh env vars without rebuilding the image. Env-only changes (KEEP_ALIVE, SA_PASSWORD,
+etc.) — run `mimir deploy restart`. Image changes (Dockerfile, scripts, binaries) —
+run `mimir deploy rebuild-game`.
 
 ### P2c: Port shift for simultaneous servers
 
 Add a `portShift` value to `mimir.json` (or `deploy/` config) that offsets all game server ports by a fixed amount. First server uses base ports (9010 etc.), second server shifts by 100 (9110), third by 200, etc.
 
 Port shift applies to all game process ports defined in the Docker Compose / server config templates at project init time. Each project gets a unique non-overlapping port range so two full server stacks can run on the same host.
+
+**Partially done**: `docker-compose.yml` already uses `${LOGIN_PORT:-9010}`, `${WM_PORT:-9013}`, `${ZONE00_PORT:-9016}`, etc. for every service, so ports can be overridden individually via `.mimir-deploy.env`. What's missing is a single `PORT_SHIFT` variable that auto-computes all game port vars (login/wm/zone00–04) so you only set one value instead of seven.
 
 ### P1: Text Table String Length Bug
 
