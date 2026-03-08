@@ -235,11 +235,11 @@ Type is persisted in `mimir.json` per env (e.g. `"type": "server"`) so all downs
 
 `start-process.ps1` Step 6 now deletes all log files from the previous run before waiting for new ones to appear, so each container restart shows only the current run's output. (Archiving to timestamped dirs deferred to backlog — deletion is sufficient for now.)
 
-### ✅ P1: CI/CD — DONE (webhook-based)
+### ✅ P1: CI/CD — DONE
 
-Continuous deploy is working via `Mimir.Webhook` container (`mimir deploy ci`): receives GitHub push webhooks, validates HMAC-SHA256, runs git pull → mimir build --all → mimir pack → robocopy → docker restart. MinGit + Mimir.Cli baked into image at deploy time.
+**Game data CI/CD**: `Mimir.Webhook` container (`mimir deploy ci`) — receives GitHub push webhooks, validates HMAC-SHA256, runs git pull → mimir build --all → mimir pack → robocopy → docker restart.
 
-GitHub Actions workflow (build+test on push/PR) is a nice-to-have but the webhook approach satisfies the core requirement.
+**Repo CI**: `.github/workflows/ci.yml` — runs `dotnet build` + `dotnet test` on every push/PR to main via GitHub Actions (windows-latest, .NET 10). Badge in README. Real-world integration tests skip gracefully when game file env vars are unset.
 
 ### ✅ P2: Game Management REST API
 
@@ -433,7 +433,7 @@ Each project is a standalone dotnet global tool. `mimir.bat` in project director
 * [ ] Publish all sub-tools as dotnet global tools (or a single `mimir` meta-tool that delegates)
 * [ ] Update `mimir init` to scaffold the updated `mimir.bat` pointing to sub-tools
 
-### P2: Custom Web App Deploy (`mimir deploy webapp`)
+### ✅ P2: Custom Web App Deploy (`mimir deploy webapp`) — DONE
 
 Allow anyone to ship a web frontend (admin panel, player portal, etc.) alongside the game
 stack. The key value is the **deploy infrastructure** — the web app tech is pluggable.
