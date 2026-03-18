@@ -681,6 +681,28 @@ Key questions:
 * [ ] Benchmark image size and build time vs current Windows containers
 * [ ] Document findings — go/no-go for replacing Windows containers with Linux+Wine stack
 
+### P2: Project CLI bootstrap ("mimir setup" or generated setup.sh)
+
+> After cloning a Mimir project, the generated `mimir.sh` calls `mimir "$@"` but
+> `mimir` isn't on PATH yet. Every collaborator needs to manually create an alias
+> or symlink. This is a friction point for onboarding.
+>
+> Possible solutions:
+> - Generate a `setup.sh` in the project that prompts for the Mimir repo location
+>   and creates the alias/symlink (e.g. `ln -s ~/mimir/mimir.sh /usr/local/bin/mimir`)
+> - Have `mimir init --mimir <path>` bake an absolute path into the generated scripts
+>   (already supported via `--mimir` flag, but not discoverable)
+> - Auto-detect: project `mimir.sh` walks up / checks `~/.mimir` / reads a
+>   `.mimir-cli-path` file to find the CLI
+> - `dotnet tool install` global tool approach (publish Mimir.Cli as a .NET tool)
+>
+> Whichever approach, it should be a single command after clone that Just Works.
+
+* [ ] Decide on approach
+* [ ] Implement setup script or auto-detection
+* [ ] Update `mimir init` to generate the bootstrap mechanism
+* [ ] Document in generated README
+
 ### P3: KIND Kubernetes Setup
 
 Local multi-node Kubernetes cluster via KIND (Kubernetes in Docker) for testing deployment on k8s before going to production. Builds on the Docker Compose stack — same images, translated to k8s manifests.
