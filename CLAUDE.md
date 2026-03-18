@@ -4,6 +4,10 @@
 
 - Move `deployPath` server binaries into project repo so fresh clone + deploy is self-contained (P2)
 
+## QuestData.shn Analysis
+
+- **`quest-data-format.md`** in project root: ongoing reverse-engineering notes for the 678-byte fixed block per quest. Update this file whenever a new field is identified. Do not keep quest field analysis only in conversation — always persist it here.
+
 ## Environment
 
 - **Platform**: Windows — use forward slashes (`Z:/path`) or double backslashes (`Z:\\path`) in bash/CLI commands

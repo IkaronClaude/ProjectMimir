@@ -403,15 +403,16 @@ All game containers now auto-restart on crash. `KEEP_ALIVE=1` is orthogonal (it 
 the container alive after the process exits via the entrypoint loop, so the container
 exits 0 on graceful stop — `on-failure` only triggers on non-zero exit).
 
-### P2: Move `deployPath` into project repo
+### ✅ P2: Move `deployPath` into project repo — DONE
 
-Currently server binaries (exes, DLLs, GamigoZR) are referenced from the host path
-at deploy time. This means a fresh clone + deploy requires downloading server files
-separately. Moving `deployPath` contents into the repo (or a submodule) would make
-the project self-contained.
+**Decision: directory symlink** (`deploy\server-files → Z:\Server`). Binaries are not
+committed to git (too large, binary, licensing), but are accessible to the Docker build
+context at `COPY server-files/...` time.
 
-* [ ] Decide: direct copy in repo vs. submodule vs. external volume reference
-* [ ] `mimir env server set deploy-path` should wire up to Dockerfile COPY step
+* [x] Decide: external volume reference via directory symlink (direct copy and submodule both rejected)
+* [x] `init.bat` now creates the symlink automatically after `mimir env server init` (with fallback instructions if symlink creation fails due to permissions)
+* [x] Generated project `README.md` (`mimir init`) documents `mklink /D deploy\server-files Z:\Server` as step 1 of the Deploy section
+* [x] `deploy/server-files/` is already in `.gitignore`
 
 ### Split `mimir` CLI into focused sub-projects
 
@@ -663,17 +664,22 @@ and call `PatchClient.CheckForUpdatesAsync()` / `PatchClient.ApplyAsync()` direc
 
 > Current deploy stack uses Windows Server Core containers (large images, slow builds, no Docker BuildKit). Investigate whether running the Fiesta game server processes under Wine inside Linux containers is viable. Benefits: smaller images, faster builds, BuildKit support, wider CI runner availability, cross-platform hosting, cheaper VPS/cloud hosting costs (Linux VMs are significantly cheaper than Windows Server licensed instances).
 
+**Infrastructure complete** — `docker-compose.linux.yml` + all Linux Dockerfiles created. Toggle via `MIMIR_OS=linux` in `.mimir-deploy.env` (or `mimir deploy set MIMIR_OS linux`). All deploy scripts (`server.bat`, `rebuild-game.bat`, `rebuild-sql.bat`, `start.bat`, `stop.bat`, `logs.bat`, `restart-game.bat`, `tail.bat`, `update.bat`, `wipe-sql.bat`, `api.bat`, `webapp.bat`) now select compose file based on `MIMIR_OS`.
+
 Key questions:
 - Do game server exes (Zone, Account, Login, etc.) run under Wine without crashing?
 - Does ODBC/SQL Server connectivity work via Wine + FreeTDS or unixODBC?
 - Are there Wine compatibility blockers for the COM/Windows APIs the exes use?
 - Image size comparison: Wine Linux image vs Windows Server Core image
 
+* [x] Create `docker-compose.linux.yml`, `Dockerfile.server.linux`, `Dockerfile.sql.linux`, `Dockerfile.patch.linux`
+* [x] Create `scripts/start-process.sh` (bash+Wine equiv of start-process.ps1) and `scripts/setup-sql.linux.sh`
+* [x] Create `config.linux/` with `sqlserver,1433` instead of `sqlserver\SQLEXPRESS`
+* [x] Wire `MIMIR_OS` switch into all deploy `.bat` files
 * [ ] Spike: run a single game process (e.g. Login) under Wine in a Linux container, verify it starts and accepts TCP connections
-* [ ] Test SQL Server connectivity: Wine + FreeTDS ODBC driver → SQL Server 2025 container
+* [ ] Test SQL Server connectivity: Wine + FreeTDS ODBC driver → SQL Server container
 * [ ] Benchmark image size and build time vs current Windows containers
 * [ ] Document findings — go/no-go for replacing Windows containers with Linux+Wine stack
-* [ ] If viable: update Dockerfiles, remove `DOCKER_BUILDKIT=0` requirement, update deploy docs
 
 ### P3: KIND Kubernetes Setup
 
@@ -743,6 +749,52 @@ SQL_PORT is not shifted (internal-only, clients never connect directly).
 mimir deploy secret set PORT_SHIFT 100
 :: Login: 9110, WM: 9113, Zone00: 9116 … Zone04: 9128, Patch: 8180, API: 5100
 ```
+
+### P1: BUG — Skill errors ("Invalid DemandSk") on zone startup
+
+> Zone server logs `Invalid DemandSk` errors on startup. Errors appear cosmetic (zone runs
+> fine) but may indicate data corruption introduced by recent Mimir merge/split pipeline
+> changes. Need to diff built skill-related SHN files against source originals to check for
+> data loss or column reordering.
+>
+> Potentially affected tables: `SkillData`, `SkillInfo`, `ActiveSkill`, `PassiveSkill`,
+> `SkillTree`, or similar skill-related SHN files.
+
+* [ ] Identify which SHN tables contain skill data (`DemandSk` column or similar)
+* [ ] Diff Mimir-built SHN vs source originals for those tables (`mimir shn --diff`)
+* [ ] If data differs, trace through merge/split pipeline to find where corruption occurs
+* [ ] Fix and verify zone starts without skill errors
+
+### ✅ P1: BUG — SQL Server rebuild race condition (SA_PASSWORD cleared after rebuild) — FIXED
+
+> `rebuild-sql.bat` and `wipe-sql.bat` previously cleared `SA_PASSWORD` from `.env` after
+> volume wipe, causing `set-sql-password` to have no `OLD_PASSWORD` to authenticate
+> `ALTER LOGIN`. Result: password mismatch → healthcheck fails for 130s → game servers
+> fail to start (appears as a "hang").
+>
+> **Root cause**: Clearing SA_PASSWORD was unnecessary — `setup-sql.ps1` already handles
+> password sync on startup (tries configured SA_PASSWORD, falls back to install default,
+> ALTER LOGINs if needed).
+>
+> **Fix**: Removed SA_PASSWORD clearing from both `rebuild-sql.bat` and `wipe-sql.bat`.
+
+### ✅ P1: BUG — DOCKER_BUILDKIT trailing space in batch scripts — FIXED
+
+> `set DOCKER_BUILDKIT=0` inside inline `( )` blocks captured a trailing space before `)`,
+> producing value `"0 "` which Docker rejected as a non-boolean. Affected 6 deploy scripts:
+> `webapp.bat`, `api.bat`, `start.bat`, `wipe-sql.bat`, `rebuild-game.bat`, `server.bat`.
+>
+> **Fix**: Quoted all assignments: `set "DOCKER_BUILDKIT=0"`.
+
+### ✅ P1: BUG — start-process.ps1 keep-alive unreachable + short log drain — FIXED
+
+> Zone containers boot-looped because: (1) service crashed before reaching "Running" state →
+> `$svcSeenRunning` never set → keep-alive block unreachable → container exits; (2) 1.5s
+> passive log drain missed output still being flushed.
+>
+> **Fix**: Added `$svcNeverRanTimeout = 30` — if service hasn't been seen running after 30s
+> and status is "Stopped", treat as crash (same exit path as after-running crash). Increased
+> log drain to 5s with active polling (10 x 500ms with Receive-Job).
 
 ### P1: Text Table String Length Bug
 
@@ -862,15 +914,33 @@ mimir deploy secret set PORT_SHIFT 100
 * \[ ] Ensure build can split back out to individual files
 * \[ ] Test with MobRegen (spawns), NPCItemList, and drop table families
 
-### P8: QuestData Field Mapping
+### P8: QuestData Field Mapping — IN PROGRESS
 
-> Map more of the 666-byte fixed data region beyond QuestID. Generate a binary dump for
-> collaborative hand-analysis against Spark Editor / known quest data. Expand FixedData
-> into proper named columns as offsets are identified.
+> Map more of the 678-byte fixed data region beyond QuestID. See `quest-data-format.md` for
+> ongoing analysis. Confirmed: no checksum in file, in-place byte modifications work. Using
+> Mimir JSON pipeline to create test quests (edit FixedData hex in QuestData.json, `mimir build`).
+>
+> **Confirmed fields**: QuestID(2-3), BaseDialogID(6-7), b14(QuestFlags), b15(ButtonMask/QuestType),
+> StartLevel(25), EndLevel(26), StartNPCID(28-29), GateQuestID(32-33), PreviousQuestID(56-57),
+> IsClassRestricted(60), RequiredClassID(61), Objectives(90+), EXP(662-663).
+>
+> **Next**: Create test quests with individual field changes to determine meanings of b14, b15,
+> b16, b17, bytes 658-661 (SP/fame?), bytes 666-677 (reward table refs?).
 
-* \[ ] Generate annotated hex dump of QuestData fixed region for hand-analysis
-* \[ ] Cross-reference with Spark Editor field definitions
-* \[ ] Incrementally extract known fields into proper columns
+* [x] Reverse-engineer file structure (version, count, recordLength, fixedData + 3 scripts)
+* [x] Map bytes 0–35 (quest identity, dialog, levels, NPCs)
+* [x] Map bytes 36–63 (chain predecessor, class restriction)
+* [x] Map bytes 86–189 (objectives region, 8-byte slot layout)
+* [x] Map bytes 658–677 (EXP reward, candidate SP/fame/reward refs)
+* [x] Confirm no checksum (manual hex edit → server starts fine)
+* [ ] In-game test: b14 variants (quest flags/icon)
+* [ ] In-game test: b15 variants (dialog button types)
+* [ ] In-game test: b16/b17 (remote accept/hand-in)
+* [ ] In-game test: bytes 658-661 (SP/fame candidate)
+* [ ] In-game test: bytes 666-677 (reward table refs — zero them)
+* [ ] Map bytes 190–513 (extended objectives region)
+* [ ] Map bytes 514–657 (suspected reward items region)
+* [ ] Incrementally extract known fields into proper named columns in QuestDataProvider
 
 ### Nice-to-Have (Do When Convenient)
 
