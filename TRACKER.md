@@ -209,6 +209,16 @@ Server is running and clients can connect/play — ShineTable roundtrip works in
 
 **3. `#Ignore \o042` not re-emitted** — Double-quote ignore directive parsed but not written back. No crash observed.
 
+### P1: Linux VPS Deploy — Zone "Script : Bad"
+
+Zone startup on Linux/Wine gets through GamigoZR HTML Pass 0-4 but fails at "Script" check. Works on Windows. Likely a Mimir build issue (encoding, line endings, missing files) or a Wine file access difference. Needs investigation.
+
+### P3: Linux Deploy — Misc TODOs
+
+- **Firewall GamigoZR port** — binds on host network, must block external access
+- **Patch Zone.exe Dbg.txt path** — Zone.exe writes `Dbg.txt` to `SysWOW64/` instead of current directory; binary-patch to use local path
+- **DB bridge CPU usage** — 57-66% idle (96 IOCP threads, not CPU-count based). Consider `cpus: 0.5` in compose or binary analysis.
+
 ### P2: Environment Type Flags on `mimir env init`
 
 Instead of remembering multiple orthogonal switches (`--passthrough server`, `--patchable client`, etc.), declare the env type once at registration time:
