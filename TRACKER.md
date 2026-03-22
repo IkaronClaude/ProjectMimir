@@ -1365,3 +1365,20 @@ Stack dump for reference: `20120409-Hero[Release]-1`, `ProtocolPacket::pp_SetPac
 * Build a lovely readme with step-by-step from built files to running docker instances
 
 ~~Docker gets stuck waiting for sql to launch~~ (fixed — healthcheck was using `localhost:1433` but SQL Express named instance uses dynamic port; changed to `.\SQLEXPRESS` named pipe connection)
+
+# Bugs
+
+## Next Up
+
+* **Per-deployment patch state** — Pack manifest and patch-index.json are currently per-project, but different deployments (dev vs prod) will diverge in patch state. Need a way to scope pack manifests and patch indexes per deployment so that dev and prod can have independent patch versioning.
+* **GitHub Actions deploy button** — Add a `workflow_dispatch` workflow to the private `my-server` repo (NOT ProjectMimir). Single manual button on production branch that SSHs to the VPS and runs full deploy. Needs GitHub secrets: VPS_HOST, VPS_USER, VPS_SSH_KEY. **Do NOT commit this to ProjectMimir** — generate the file and give it to the user to place in their private repo. (In progress)
+* **Server message tool via OpTool** — Connect OpTool (or similar) to send in-game server messages like "Server restarting in 5 minutes" as part of the GitHub Actions deploy pipeline. User already has a working script for dev. Set up for prod on VPS. (P2, my-server repo)
+* **Auto patch log from git commits** — Collect all git commit messages since last deploy and generate a patch changelog automatically. Integrate into the deploy pipeline. (P3, my-server repo)
+
+# Bugs
+
+* **Leaderboard class IDs are wrong** — `CLASS_NAMES` mapping in `app.js` is incorrect. What shows as "Archer" (ID 1) is actually Fighter, etc. Need to verify correct class ID → name mapping from the game data and fix the map in `src/Mimir.StaticServer/wwwroot/app.js`.
+* **Leaderboard shows "Race" column** — Fiesta doesn't have races. Remove `RACE_NAMES` and the Race column from the leaderboard in `app.js`.
+* ~~**Build always resets pack baseline**~~ (fixed — `SeedBaselineAsync` now skips if manifest already exists)
+* **Deploy: do full build before restarting containers** — `server.sh` stops containers, builds, then restarts. Should do the full build+pack+rsync first, only then stop/restart containers to minimize downtime. (P2)
+* **Deploy: network connect errors** — `docker network connect` fails with "endpoint already exists" when containers are already on the network. Add `|| true` to prevent deploy script from exiting with error. (P2, my-server repo)
