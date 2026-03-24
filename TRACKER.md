@@ -725,6 +725,14 @@ Local multi-node Kubernetes cluster via KIND (Kubernetes in Docker) for testing 
 * [ ] Liveness probes tied to Windows service health
 * [ ] Namespace isolation per Mimir project (mirrors per-project Docker naming)
 
+### P3: Swagger lock icon only on authenticated endpoints
+
+The document transformer currently adds a Bearer security requirement to **all** operations. Unauthenticated endpoints like `/api/config` and `/api/leaderboard` show a lock icon even though they don't require a JWT. Should use an operation transformer that checks for `RequireAuthorization()` metadata to only add security requirements to endpoints that actually need auth.
+
+* [ ] Switch from document transformer to operation transformer for security requirements
+* [ ] Detect `RequireAuthorization` metadata (not `IAuthorizeData` — minimal APIs may use different metadata types)
+* [ ] Keep document transformer for registering the Bearer scheme in components
+
 ### ✅ P1: Per-project deploy config (`mimir deploy set`) — DONE
 
 `mimir deploy set KEY=VALUE` writes a key=value pair to `<project>/.mimir-deploy.env`. `mimir.bat` automatically loads this file into the environment before calling any deploy script, so variables like `SA_PASSWORD` are available to Docker Compose without being hardcoded in the compose file.
